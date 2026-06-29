@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openai-tunnel-kit"
+version = "0.1.0"
+description = "Portable profile and systemd tooling for tunnel-client and MCP setups"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [{name = "Yūrei.dll"}]
+dependencies = []
+
+[project.scripts]
+openai-tunnel-kit = "openai_tunnel_kit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
