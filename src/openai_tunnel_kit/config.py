@@ -21,6 +21,7 @@ MANAGED_ENVIRONMENT_KEYS = {
     "TUNNEL_CLIENT_BIN",
     "TUNNEL_CLIENT_ARGS",
     "TUNNEL_CLIENT_MCP_ARGS",
+    "OPENAI_TUNNEL_KIT_PASS_DESKTOP_ENVIRONMENT",
 }
 
 
@@ -146,6 +147,7 @@ def initialize_profile(
     root: Optional[Path] = None,
     tunnel_id: str = "",
     api_key: str = "",
+    pass_desktop_environment: bool = False,
 ) -> ProfilePaths:
     paths = profile_paths(profile, root)
     if paths.env.exists() and not force:
@@ -166,7 +168,9 @@ def initialize_profile(
         launch = mcp_launch(mcp_content)
         mcp_text = normalize_mcp(mcp_content)
     elif paths.mcp.exists() and force:
-        mcp_text = paths.mcp.read_text(encoding="utf-8")
+        mcp_content = load_mcp(paths.mcp)
+        launch = mcp_launch(mcp_content)
+        mcp_text = normalize_mcp(mcp_content)
     else:
         mcp_text = render_mcp_example()
 
@@ -180,6 +184,7 @@ def initialize_profile(
             api_key,
             launch.arguments,
             launch.environment,
+            pass_desktop_environment,
         ),
     )
     return paths
@@ -215,6 +220,8 @@ def register_mcp(profile: str, source: Path, root: Optional[Path] = None) -> Pat
             environment.get("CONTROL_PLANE_API_KEY", ""),
             launch.arguments,
             extra_environment,
+            environment.get("OPENAI_TUNNEL_KIT_PASS_DESKTOP_ENVIRONMENT", "").lower()
+            in {"1", "true", "yes"},
         ),
     )
     return paths.mcp

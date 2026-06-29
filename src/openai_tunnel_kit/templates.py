@@ -20,6 +20,7 @@ def render_profile(
     api_key: str = "",
     mcp_arguments: Sequence[str] = (),
     extra_environment: Optional[Mapping[str, str]] = None,
+    pass_desktop_environment: bool = False,
 ) -> str:
     # systemd expands $TUNNEL_CLIENT_ARGS into words. JSON strings preserve spaces
     # and quotes without requiring a shell.
@@ -35,6 +36,8 @@ def render_profile(
         f"TUNNEL_CLIENT_BIN={_environment_value(binary)}\n",
         f"TUNNEL_CLIENT_ARGS={_environment_value(encoded_args)}\n",
         f"TUNNEL_CLIENT_MCP_ARGS={_environment_value(encoded_mcp_args)}\n",
+        "OPENAI_TUNNEL_KIT_PASS_DESKTOP_ENVIRONMENT="
+        f"{_environment_value('true' if pass_desktop_environment else 'false')}\n",
     ]
     if extra_environment:
         lines.append("# Environment requested by the registered MCP server.\n")
@@ -61,6 +64,14 @@ RestartSec=5s
 
 [Install]
 WantedBy=default.target
+"""
+
+
+def render_desktop_environment_drop_in() -> str:
+    return """[Service]
+PassEnvironment=DISPLAY WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
+PassEnvironment=XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP XDG_SESSION_TYPE DESKTOP_SESSION
+PassEnvironment=KDE_FULL_SESSION GNOME_DESKTOP_SESSION_ID
 """
 
 

@@ -45,6 +45,11 @@ def parser() -> argparse.ArgumentParser:
         help="read the runtime API key from a file",
     )
     init.add_argument("--mcp-file", type=Path, help="existing MCP JSON to copy into the profile")
+    init.add_argument(
+        "--pass-desktop-environment",
+        action="store_true",
+        help="pass desktop session variables through the systemd service",
+    )
     init.add_argument("--force", action="store_true", help="replace an existing profile")
 
     install = commands.add_parser("install-service", help="install, enable, and start a profile service")
@@ -94,6 +99,7 @@ def run(arguments: Optional[Sequence[str]] = None) -> int:
             args.force,
             tunnel_id=args.tunnel_id,
             api_key=api_key,
+            pass_desktop_environment=args.pass_desktop_environment,
         )
         print(f"Created profile: {paths.env}")
         print(f"MCP config:      {paths.mcp}")

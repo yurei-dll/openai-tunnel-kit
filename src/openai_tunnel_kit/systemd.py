@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
-from .config import ConfigError, config_dir, require_profile, write_text_atomic
-from .templates import render_systemd_unit
+from .config import ConfigError, config_dir, read_environment, require_profile, write_text_atomic
+from .templates import render_desktop_environment_drop_in, render_systemd_unit
 
 
 UNIT_NAME = "tunnel-client@.service"
@@ -28,6 +28,23 @@ def instance_name(profile: str) -> str:
     return f"tunnel-client@{profile}.service"
 
 
+def instance_drop_in_dir(profile: str) -> Path:
+    return user_unit_dir() / f"{instance_name(profile)}.d"
+
+
+def desktop_drop_in_path(profile: str) -> Path:
+    return instance_drop_in_dir(profile) / "desktop-environment.conf"
+
+
+def remove_desktop_drop_in(profile: str) -> None:
+    path = desktop_drop_in_path(profile)
+    path.unlink(missing_ok=True)
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
+
+
 def run_systemctl(arguments: Sequence[str], check: bool = True) -> subprocess.CompletedProcess[str]:
     if shutil.which("systemctl") is None:
         raise ConfigError("systemctl was not found; systemd user services are required")
@@ -43,11 +60,23 @@ def run_systemctl(arguments: Sequence[str], check: bool = True) -> subprocess.Co
 
 
 def install_service(profile: str, start: bool = True, root: Optional[Path] = None) -> Path:
-    require_profile(profile, root)
+    paths = require_profile(profile, root)
     if shutil.which("systemctl") is None:
         raise ConfigError("systemctl was not found; systemd user services are required")
     destination = unit_path()
     write_text_atomic(destination, render_systemd_unit(root or config_dir()), mode=0o644)
+    environment = read_environment(paths.env)
+    pass_desktop_environment = environment.get(
+        "OPENAI_TUNNEL_KIT_PASS_DESKTOP_ENVIRONMENT", ""
+    ).lower() in {"1", "true", "yes"}
+    if pass_desktop_environment:
+        write_text_atomic(
+            desktop_drop_in_path(profile),
+            render_desktop_environment_drop_in(),
+            mode=0o644,
+        )
+    else:
+        remove_desktop_drop_in(profile)
     run_systemctl(["daemon-reload"])
     args = ["enable"]
     if start:
@@ -64,8 +93,10 @@ def status(profile: str) -> int:
 
 def uninstall_service(profile: str) -> None:
     if not unit_path().is_file():
+        remove_desktop_drop_in(profile)
         return
     run_systemctl(["disable", "--now", instance_name(profile)])
+    remove_desktop_drop_in(profile)
     run_systemctl(["daemon-reload"])
 
 
