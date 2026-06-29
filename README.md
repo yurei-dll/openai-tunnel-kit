@@ -45,6 +45,11 @@ The `Portable executables` GitHub Actions workflow builds self-contained Linux
 archives for `x86_64` and `arm64`. Download the artifact for your architecture,
 verify it with the adjacent `.sha256` file, and extract it:
 
+**[Download the latest portable builds →](https://github.com/yurei-dll/openai-tunnel-kit/actions/workflows/portable-executables.yml)**
+
+Open the newest successful run and choose the `x86_64` or `arm64` artifact near
+the bottom of its summary page.
+
 ```console
 sha256sum --check openai-tunnel-kit-linux-x86_64.tar.gz.sha256
 tar -xzf openai-tunnel-kit-linux-x86_64.tar.gz
