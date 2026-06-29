@@ -12,8 +12,10 @@ class SystemdTests(unittest.TestCase):
     def test_unit_is_user_template_with_restart_and_environment_file(self):
         unit = render_systemd_unit(Path("/home/example/.config/openai-tunnel-kit"))
         self.assertIn("EnvironmentFile=/home/example/.config/openai-tunnel-kit/profiles/%i.env", unit)
-        self.assertIn('Environment="MCP_CONFIG=/home/example/.config/openai-tunnel-kit/profiles/%i.mcp.json"', unit)
-        self.assertIn("ExecStart=/usr/bin/env ${TUNNEL_CLIENT_BIN} $TUNNEL_CLIENT_ARGS", unit)
+        self.assertIn(
+            "ExecStart=/usr/bin/env ${TUNNEL_CLIENT_BIN} run $TUNNEL_CLIENT_ARGS $TUNNEL_CLIENT_MCP_ARGS",
+            unit,
+        )
         self.assertIn("Restart=on-failure", unit)
         self.assertIn("WantedBy=default.target", unit)
 

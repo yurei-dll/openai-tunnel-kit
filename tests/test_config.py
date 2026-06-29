@@ -15,9 +15,18 @@ class ConfigTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_initialize_profile_is_explicit_and_reproducible(self):
-        paths = initialize_profile("work", "/opt/bin/tunnel-client", ["--listen", "127.0.0.1:9000"], root=self.root)
+        paths = initialize_profile(
+            "work",
+            "/opt/bin/tunnel-client",
+            ["--listen", "127.0.0.1:9000"],
+            root=self.root,
+            tunnel_id="tunnel_example",
+            api_key="sk-example",
+        )
 
         environment = read_environment(paths.env)
+        self.assertEqual(environment["CONTROL_PLANE_TUNNEL_ID"], "tunnel_example")
+        self.assertEqual(environment["CONTROL_PLANE_API_KEY"], "sk-example")
         self.assertEqual(environment["TUNNEL_CLIENT_BIN"], "/opt/bin/tunnel-client")
         self.assertIn("127.0.0.1:9000", environment["TUNNEL_CLIENT_ARGS"])
         self.assertNotIn("MCP_CONFIG", environment)
@@ -38,9 +47,21 @@ class ConfigTests(unittest.TestCase):
     def test_register_mcp_validates_and_normalizes_json(self):
         paths = initialize_profile("work", root=self.root)
         source = self.root / "source.json"
-        source.write_text('{"z": 1, "a": 2}')
+        source.write_text(
+            '{"mcpServers":{"mine":{"command":"node","args":["/repo/dist/index.js"],"env":{"MODE":"test"}}}}'
+        )
         register_mcp("work", source, root=self.root)
-        self.assertEqual(paths.mcp.read_text(), '{\n  "a": 2,\n  "z": 1\n}\n')
+        environment = read_environment(paths.env)
+        self.assertIn("--mcp.command", environment["TUNNEL_CLIENT_MCP_ARGS"])
+        self.assertIn("/repo/dist/index.js", environment["TUNNEL_CLIENT_MCP_ARGS"])
+        self.assertEqual(environment["MODE"], "test")
+
+    def test_mcp_file_configures_launch_during_init(self):
+        source = self.root / "source.json"
+        source.write_text('{"mcpServers":{"mine":{"command":"node","args":["/repo/server.js"]}}}')
+        paths = initialize_profile("work", mcp_source=source, root=self.root)
+        environment = read_environment(paths.env)
+        self.assertIn("--mcp.command", environment["TUNNEL_CLIENT_MCP_ARGS"])
 
     def test_rejects_unsafe_profile_name(self):
         with self.assertRaises(ConfigError):
