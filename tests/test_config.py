@@ -40,9 +40,12 @@ class ConfigTests(unittest.TestCase):
 
     def test_force_preserves_existing_mcp(self):
         paths = initialize_profile("work", root=self.root)
-        paths.mcp.write_text('{"mcpServers":{"mine":{}}}\n')
+        paths.mcp.write_text(
+            '{"mcpServers":{"mine":{"command":"node","args":["/repo/server.js"]}}}\n'
+        )
         initialize_profile("work", force=True, root=self.root)
         self.assertIn("mine", paths.mcp.read_text())
+        self.assertIn("--mcp.command", read_environment(paths.env)["TUNNEL_CLIENT_MCP_ARGS"])
 
     def test_register_mcp_validates_and_normalizes_json(self):
         paths = initialize_profile("work", root=self.root)
@@ -62,6 +65,11 @@ class ConfigTests(unittest.TestCase):
         paths = initialize_profile("work", mcp_source=source, root=self.root)
         environment = read_environment(paths.env)
         self.assertIn("--mcp.command", environment["TUNNEL_CLIENT_MCP_ARGS"])
+
+    def test_desktop_environment_preference_is_stored(self):
+        paths = initialize_profile("desktop", root=self.root, pass_desktop_environment=True)
+        environment = read_environment(paths.env)
+        self.assertEqual(environment["OPENAI_TUNNEL_KIT_PASS_DESKTOP_ENVIRONMENT"], "true")
 
     def test_rejects_unsafe_profile_name(self):
         with self.assertRaises(ConfigError):

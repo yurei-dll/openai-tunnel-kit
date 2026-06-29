@@ -5,7 +5,7 @@ from unittest.mock import call, patch
 
 from openai_tunnel_kit.config import initialize_profile
 from openai_tunnel_kit.systemd import install_service
-from openai_tunnel_kit.templates import render_systemd_unit
+from openai_tunnel_kit.templates import render_desktop_environment_drop_in, render_systemd_unit
 
 
 class SystemdTests(unittest.TestCase):
@@ -28,6 +28,28 @@ class SystemdTests(unittest.TestCase):
             install_service("demo", root=root)
         self.assertEqual(systemctl.call_args_list, [call(["daemon-reload"]), call(["enable", "--now", "tunnel-client@demo.service"])])
         self.assertEqual(write.call_args.kwargs["mode"], 0o644)
+
+    def test_desktop_drop_in_passes_session_environment(self):
+        drop_in = render_desktop_environment_drop_in()
+        self.assertIn("PassEnvironment=DISPLAY WAYLAND_DISPLAY XAUTHORITY", drop_in)
+        self.assertIn("DBUS_SESSION_BUS_ADDRESS", drop_in)
+        self.assertIn("XDG_RUNTIME_DIR", drop_in)
+
+    @patch("openai_tunnel_kit.systemd.write_text_atomic")
+    @patch("openai_tunnel_kit.systemd.run_systemctl")
+    def test_install_writes_instance_drop_in_when_enabled(self, systemctl, write):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            initialize_profile("desktop", root=root, pass_desktop_environment=True)
+            install_service("desktop", root=root)
+        written_paths = [entry.args[0] for entry in write.call_args_list]
+        self.assertTrue(
+            any(str(path).endswith("tunnel-client@desktop.service.d/desktop-environment.conf") for path in written_paths)
+        )
+        self.assertEqual(
+            systemctl.call_args_list,
+            [call(["daemon-reload"]), call(["enable", "--now", "tunnel-client@desktop.service"])],
+        )
 
 
 if __name__ == "__main__":
