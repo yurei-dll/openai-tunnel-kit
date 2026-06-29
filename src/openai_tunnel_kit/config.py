@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -13,10 +14,24 @@ from .templates import render_mcp_example, render_profile
 
 
 PROFILE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+ENVIRONMENT_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+MANAGED_ENVIRONMENT_KEYS = {
+    "CONTROL_PLANE_TUNNEL_ID",
+    "CONTROL_PLANE_API_KEY",
+    "TUNNEL_CLIENT_BIN",
+    "TUNNEL_CLIENT_ARGS",
+    "TUNNEL_CLIENT_MCP_ARGS",
+}
 
 
 class ConfigError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class McpLaunch:
+    arguments: tuple[str, ...]
+    environment: dict[str, str]
 
 
 def config_dir() -> Path:
@@ -82,6 +97,46 @@ def normalize_mcp(content: Any) -> str:
     return json.dumps(content, indent=2, sort_keys=True) + "\n"
 
 
+def mcp_launch(content: Any) -> McpLaunch:
+    if not isinstance(content, dict) or not isinstance(content.get("mcpServers"), dict):
+        raise ConfigError("MCP config must contain an 'mcpServers' object")
+    servers = content["mcpServers"]
+    if len(servers) != 1:
+        raise ConfigError("tunnel profiles require exactly one MCP server bound to channel 'main'")
+    name, server = next(iter(servers.items()))
+    if not isinstance(server, dict):
+        raise ConfigError(f"MCP server {name!r} must be a JSON object")
+
+    environment = server.get("env", {})
+    if not isinstance(environment, dict) or any(
+        not isinstance(key, str)
+        or not ENVIRONMENT_KEY_PATTERN.fullmatch(key)
+        or not isinstance(value, str)
+        for key, value in environment.items()
+    ):
+        raise ConfigError(f"MCP server {name!r} has invalid environment variables")
+    if MANAGED_ENVIRONMENT_KEYS.intersection(environment):
+        raise ConfigError(f"MCP server {name!r} cannot override toolkit-managed environment variables")
+
+    command = server.get("command")
+    url = server.get("url")
+    if isinstance(command, str) and command:
+        raw_args = server.get("args", [])
+        if not isinstance(raw_args, list) or any(not isinstance(value, str) for value in raw_args):
+            raise ConfigError(f"MCP server {name!r} args must be an array of strings")
+        command_line = shlex.join((command, *raw_args))
+        if "," in command_line:
+            raise ConfigError("MCP command paths and arguments cannot contain commas")
+        arguments = ("--mcp.command", f"command={command_line},channel=main")
+    elif isinstance(url, str) and url:
+        if "," in url:
+            raise ConfigError("MCP server URLs cannot contain commas")
+        arguments = ("--mcp.server-url", f"url={url},channel=main")
+    else:
+        raise ConfigError(f"MCP server {name!r} needs either 'command' or 'url'")
+    return McpLaunch(arguments, dict(environment))
+
+
 def initialize_profile(
     profile: str,
     binary: str = "tunnel-client",
@@ -89,6 +144,8 @@ def initialize_profile(
     mcp_source: Optional[Path] = None,
     force: bool = False,
     root: Optional[Path] = None,
+    tunnel_id: str = "",
+    api_key: str = "",
 ) -> ProfilePaths:
     paths = profile_paths(profile, root)
     if paths.env.exists() and not force:
@@ -98,22 +155,68 @@ def initialize_profile(
     arguments = tuple(arguments)
     if any("\n" in argument or "\r" in argument or "\0" in argument for argument in arguments):
         raise ConfigError("--arg values cannot contain newlines or NUL bytes")
+    if any(character in tunnel_id for character in "\n\r\0"):
+        raise ConfigError("--tunnel-id cannot contain newlines or NUL bytes")
+    if any(character in api_key for character in "\n\r\0"):
+        raise ConfigError("--api-key cannot contain newlines or NUL bytes")
 
+    launch = McpLaunch((), {})
     if mcp_source:
-        mcp_text = normalize_mcp(load_mcp(mcp_source))
+        mcp_content = load_mcp(mcp_source)
+        launch = mcp_launch(mcp_content)
+        mcp_text = normalize_mcp(mcp_content)
     elif paths.mcp.exists() and force:
         mcp_text = paths.mcp.read_text(encoding="utf-8")
     else:
         mcp_text = render_mcp_example()
 
     write_text_atomic(paths.mcp, mcp_text)
-    write_text_atomic(paths.env, render_profile(binary, arguments))
+    write_text_atomic(
+        paths.env,
+        render_profile(
+            binary,
+            arguments,
+            tunnel_id,
+            api_key,
+            launch.arguments,
+            launch.environment,
+        ),
+    )
     return paths
 
 
 def register_mcp(profile: str, source: Path, root: Optional[Path] = None) -> Path:
     paths = require_profile(profile, root)
-    write_text_atomic(paths.mcp, normalize_mcp(load_mcp(source)))
+    content = load_mcp(source)
+    launch = mcp_launch(content)
+    environment = read_environment(paths.env)
+    old_mcp_environment: set[str] = set()
+    try:
+        old_mcp_environment = set(mcp_launch(load_mcp(paths.mcp)).environment)
+    except ConfigError:
+        pass
+    extra_environment = {
+        key: value
+        for key, value in environment.items()
+        if key not in MANAGED_ENVIRONMENT_KEYS and key not in old_mcp_environment
+    }
+    extra_environment.update(launch.environment)
+    try:
+        arguments = shlex.split(environment.get("TUNNEL_CLIENT_ARGS", ""))
+    except ValueError as exc:
+        raise ConfigError(f"invalid TUNNEL_CLIENT_ARGS in {paths.env}: {exc}") from exc
+    write_text_atomic(paths.mcp, normalize_mcp(content))
+    write_text_atomic(
+        paths.env,
+        render_profile(
+            environment.get("TUNNEL_CLIENT_BIN", "tunnel-client"),
+            arguments,
+            environment.get("CONTROL_PLANE_TUNNEL_ID", ""),
+            environment.get("CONTROL_PLANE_API_KEY", ""),
+            launch.arguments,
+            extra_environment,
+        ),
+    )
     return paths.mcp
 
 
@@ -121,6 +224,18 @@ def require_profile(profile: str, root: Optional[Path] = None) -> ProfilePaths:
     paths = profile_paths(profile, root)
     if not paths.env.is_file():
         raise ConfigError(f"profile not found: {profile}; run 'openai-tunnel-kit init {profile}'")
+    return paths
+
+
+def list_profiles(root: Optional[Path] = None) -> list[str]:
+    profiles_dir = (root or config_dir()) / "profiles"
+    return sorted(path.stem for path in profiles_dir.glob("*.env") if path.is_file())
+
+
+def remove_profile(profile: str, root: Optional[Path] = None) -> ProfilePaths:
+    paths = require_profile(profile, root)
+    paths.env.unlink()
+    paths.mcp.unlink(missing_ok=True)
     return paths
 
 

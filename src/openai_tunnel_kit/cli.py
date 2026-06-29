@@ -11,9 +11,11 @@ from . import __version__
 from .config import (
     ConfigError,
     initialize_profile,
+    list_profiles,
     load_mcp,
     normalize_mcp,
     register_mcp,
+    remove_profile,
     require_profile,
 )
 from .systemd import doctor, install_service, status, uninstall_service
@@ -28,6 +30,20 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("profile")
     init.add_argument("--binary", default="tunnel-client", help="external tunnel-client executable")
     init.add_argument("--arg", action="append", default=[], help="argument passed to tunnel-client (repeatable)")
+    init.add_argument("--tunnel-id", default="", metavar="ID", help="OpenAI tunnel ID (CONTROL_PLANE_TUNNEL_ID)")
+    key = init.add_mutually_exclusive_group()
+    key.add_argument(
+        "--api-key",
+        default="",
+        metavar="KEY",
+        help="runtime API key (visible in shell history; prefer --api-key-file)",
+    )
+    key.add_argument(
+        "--api-key-file",
+        type=Path,
+        metavar="FILE",
+        help="read the runtime API key from a file",
+    )
     init.add_argument("--mcp-file", type=Path, help="existing MCP JSON to copy into the profile")
     init.add_argument("--force", action="store_true", help="replace an existing profile")
 
@@ -48,6 +64,14 @@ def parser() -> argparse.ArgumentParser:
     diagnose = commands.add_parser("doctor", help="diagnose local setup problems")
     diagnose.add_argument("profile", nargs="?", help="check one profile (default: all)")
 
+    commands.add_parser("list-profiles", help="list configured profile names")
+
+    remove_profile_command = commands.add_parser(
+        "remove-profile",
+        help="disable its service and delete a profile",
+    )
+    remove_profile_command.add_argument("profile")
+
     remove = commands.add_parser("uninstall", help="disable a profile service")
     remove.add_argument("profile")
     remove.add_argument("--purge", action="store_true", help="also delete the profile and MCP files")
@@ -57,9 +81,28 @@ def parser() -> argparse.ArgumentParser:
 def run(arguments: Optional[Sequence[str]] = None) -> int:
     args = parser().parse_args(arguments)
     if args.command == "init":
-        paths = initialize_profile(args.profile, args.binary, args.arg, args.mcp_file, args.force)
+        api_key = args.api_key
+        if args.api_key_file:
+            api_key = args.api_key_file.read_text(encoding="utf-8").strip()
+            if not api_key:
+                raise ConfigError(f"API key file is empty: {args.api_key_file}")
+        paths = initialize_profile(
+            args.profile,
+            args.binary,
+            args.arg,
+            args.mcp_file,
+            args.force,
+            tunnel_id=args.tunnel_id,
+            api_key=api_key,
+        )
         print(f"Created profile: {paths.env}")
         print(f"MCP config:      {paths.mcp}")
+        if not args.tunnel_id:
+            print("Action required: set CONTROL_PLANE_TUNNEL_ID in the profile or rerun with --tunnel-id")
+        if not api_key:
+            print("Action required: set CONTROL_PLANE_API_KEY in the profile or rerun with --api-key-file")
+        if not args.mcp_file:
+            print("Action required: register the MCP server with 'openai-tunnel-kit set-mcp " f"{args.profile} FILE'")
         print(f"Next: openai-tunnel-kit install-service {args.profile}")
         return 0
     if args.command == "install-service":
@@ -85,12 +128,24 @@ def run(arguments: Optional[Sequence[str]] = None) -> int:
         failed = sum(not check.ok for check in checks)
         print(f"\n{len(checks) - failed} passed, {failed} failed")
         return 1 if failed else 0
+    if args.command == "list-profiles":
+        profiles = list_profiles()
+        if profiles:
+            print("\n".join(profiles))
+        else:
+            print("No profiles configured.")
+        return 0
+    if args.command == "remove-profile":
+        require_profile(args.profile)
+        uninstall_service(args.profile)
+        remove_profile(args.profile)
+        print(f"Disabled service and deleted profile {args.profile}")
+        return 0
     if args.command == "uninstall":
         paths = require_profile(args.profile)
         uninstall_service(args.profile)
         if args.purge:
-            paths.env.unlink(missing_ok=True)
-            paths.mcp.unlink(missing_ok=True)
+            remove_profile(args.profile)
             print(f"Disabled service and deleted profile {args.profile}")
         else:
             print(f"Disabled service; profile retained at {paths.env}")

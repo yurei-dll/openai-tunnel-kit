@@ -63,7 +63,9 @@ def status(profile: str) -> int:
 
 
 def uninstall_service(profile: str) -> None:
-    run_systemctl(["disable", "--now", instance_name(profile)], check=False)
+    if not unit_path().is_file():
+        return
+    run_systemctl(["disable", "--now", instance_name(profile)])
     run_systemctl(["daemon-reload"])
 
 
@@ -97,7 +99,7 @@ def doctor(profile: Optional[str] = None, root: Optional[Path] = None) -> list[C
         checks.append(Check(False, "profiles", "none found; run 'openai-tunnel-kit init <profile>'"))
         return checks
 
-    from .config import load_mcp, profile_paths, read_environment
+    from .config import load_mcp, mcp_launch, profile_paths, read_environment
 
     for name in profiles:
         paths = profile_paths(name, root)
@@ -106,14 +108,37 @@ def doctor(profile: Optional[str] = None, root: Optional[Path] = None) -> list[C
             continue
         try:
             environment = read_environment(paths.env)
+            tunnel_id = environment.get("CONTROL_PLANE_TUNNEL_ID", "")
+            api_key = environment.get("CONTROL_PLANE_API_KEY", "")
+            checks.append(
+                Check(
+                    bool(tunnel_id),
+                    f"profile {name} tunnel ID",
+                    "configured" if tunnel_id else "missing; use init --tunnel-id or edit the profile",
+                )
+            )
+            checks.append(
+                Check(
+                    bool(api_key),
+                    f"profile {name} API key",
+                    "configured" if api_key else "missing; use init --api-key-file or edit the profile",
+                )
+            )
             binary = environment.get("TUNNEL_CLIENT_BIN", "")
             binary_found = bool(
                 binary
                 and (os.access(binary, os.X_OK) if "/" in binary else shutil.which(binary))
             )
             checks.append(Check(binary_found, f"profile {name} binary", binary or "TUNNEL_CLIENT_BIN is unset"))
-            load_mcp(paths.mcp)
+            launch = mcp_launch(load_mcp(paths.mcp))
             checks.append(Check(True, f"profile {name} MCP", str(paths.mcp)))
+            checks.append(
+                Check(
+                    bool(environment.get("TUNNEL_CLIENT_MCP_ARGS")),
+                    f"profile {name} MCP launch",
+                    " ".join(launch.arguments),
+                )
+            )
         except (ConfigError, OSError) as exc:
             checks.append(Check(False, f"profile {name} config", str(exc)))
     return checks
