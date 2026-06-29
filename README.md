@@ -16,12 +16,28 @@ client or MCP servers.
 
 ## Install
 
+On Debian, Ubuntu, and other distributions that mark the system Python as
+**externally managed** (PEP 668), use the included venv helper instead of
+`sudo pip`, `--break-system-packages`, or modifying the OS Python:
+
 ```console
-python3 -m pip install .
+./scripts/bootstrap-venv.sh
+./.venv/bin/openai-tunnel-kit --help
 ```
 
-For development, `scripts/bootstrap-venv.sh` creates `.venv` and installs the
-project in editable mode.
+The helper creates `.venv` and installs this checkout in editable mode. Run
+commands directly through `./.venv/bin/openai-tunnel-kit`, or activate the
+environment so the shorter commands used below work:
+
+```console
+source .venv/bin/activate
+openai-tunnel-kit --help
+```
+
+If `python3 -m venv` is unavailable, install your distribution's venv package
+first (commonly `python3-venv` on Debian-family systems). On Python
+installations that are not externally managed, a normal virtual environment or
+`python3 -m pip install .` also works.
 
 ## Quick start
 
@@ -97,6 +113,7 @@ unless `--mcp-file` is also supplied.
 ```text
 openai-tunnel-kit init <profile> [--tunnel-id ID] [--api-key-file FILE | --api-key KEY]
                                [--binary PATH] [--arg ARG] [--mcp-file FILE]
+                               [--pass-desktop-environment]
 openai-tunnel-kit install-service <profile> [--no-start]
 openai-tunnel-kit status <profile>
 openai-tunnel-kit print-mcp <profile>
@@ -119,6 +136,13 @@ Add `--purge` to delete the profile files too.
 `remove-profile` disables and stops the profile's service before deleting its
 `.env` and MCP JSON files. If systemd removal fails, the profile files are
 retained so the service cannot be left pointing at missing configuration.
+
+For MCP servers that interact with the logged-in desktop, add
+`--pass-desktop-environment` when creating the profile. `install-service` then
+creates an instance-specific systemd drop-in that passes current Wayland/X11,
+D-Bus, XDG runtime, and desktop-session variables to tunnel-client and its MCP
+child. The values come from the systemd user manager on each launch; they are
+not frozen into the profile or copied between machines.
 
 ## Debugging and reboot behavior
 
