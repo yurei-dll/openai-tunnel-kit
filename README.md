@@ -39,6 +39,23 @@ first (commonly `python3-venv` on Debian-family systems). On Python
 installations that are not externally managed, a normal virtual environment or
 `python3 -m pip install .` also works.
 
+### Portable executables
+
+The `Portable executables` GitHub Actions workflow builds self-contained Linux
+archives for `x86_64` and `arm64`. Download the artifact for your architecture,
+verify it with the adjacent `.sha256` file, and extract it:
+
+```console
+sha256sum --check openai-tunnel-kit-linux-x86_64.tar.gz.sha256
+tar -xzf openai-tunnel-kit-linux-x86_64.tar.gz
+./openai-tunnel-kit --help
+```
+
+These archives include Python and this toolkit, but intentionally do not bundle
+the external `tunnel-client`, systemd, or an MCP server's runtime. They are
+built on Ubuntu 22.04 and target compatible glibc-based Linux distributions of
+the matching architecture.
+
 ## Quick start
 
 ```console
