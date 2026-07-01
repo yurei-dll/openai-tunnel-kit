@@ -121,6 +121,7 @@ class CliTests(unittest.TestCase):
         mcp = self.root / "mcp.json"
         mcp.write_text('{"mcpServers":{"demo":{"command":"server","args":[]}}}')
         variables = {
+            "OPENAI_TUNNEL_KIT_CONFIG_DIR": str(self.root),
             "OPENAI_TUNNEL_PROFILE": "work",
             "CONTROL_PLANE_TUNNEL_ID": "tunnel_example",
             "CONTROL_PLANE_API_KEY": "sk-transient",
@@ -149,6 +150,38 @@ class CliTests(unittest.TestCase):
             code, _, error = self.invoke(["setup-env"])
         self.assertEqual(code, 2)
         self.assertIn("OPENAI_TUNNEL_MCP_FILE is required", error)
+
+    @patch("openai_tunnel_kit.cli.install_service")
+    @patch("openai_tunnel_kit.cli.encrypt_api_key")
+    @patch("openai_tunnel_kit.cli.provision_tunnel")
+    def test_setup_env_can_provision_tunnel_without_storing_admin_key(self, provision, encrypt, install):
+        mcp = self.root / "mcp.json"
+        mcp.write_text('{"mcpServers":{"demo":{"command":"server"}}}')
+
+        def assign_tunnel(profile, *_args, **_kwargs):
+            from openai_tunnel_kit.config import set_tunnel_id
+            set_tunnel_id(profile, "tunnel_created")
+            return {"id": "tunnel_created", "workspace_ids": ["ws_1"]}
+
+        provision.side_effect = assign_tunnel
+        variables = {
+            "OPENAI_TUNNEL_KIT_CONFIG_DIR": str(self.root),
+            "OPENAI_TUNNEL_PROFILE": "work",
+            "CONTROL_PLANE_API_KEY": "sk-transient",
+            "OPENAI_TUNNEL_ADMIN_KEY_FILE": str(self.root / "admin.key"),
+            "OPENAI_TUNNEL_WORKSPACE_IDS": "ws_1",
+            "OPENAI_TUNNEL_MCP_FILE": str(mcp),
+        }
+        with patch.dict(os.environ, variables, clear=True):
+            code, _, error = self.invoke(["setup-env"])
+        self.assertEqual((code, error), (0, ""))
+        profile = (self.root / "profiles" / "work.env").read_text()
+        self.assertIn('CONTROL_PLANE_TUNNEL_ID="tunnel_created"', profile)
+        self.assertNotIn("sk-transient", profile)
+        self.assertNotIn("admin.key", profile)
+        provision.assert_called_once()
+        encrypt.assert_called_once()
+        install.assert_called_once()
 
 
 if __name__ == "__main__":

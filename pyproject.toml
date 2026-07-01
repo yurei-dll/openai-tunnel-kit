@@ -13,6 +13,12 @@ license-files = ["LICENSE"]
 authors = [{name = "Yūrei.dll"}]
 dependencies = []
 
+[project.optional-dependencies]
+wizard = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+]
+
 [project.scripts]
 openai-tunnel-kit = "openai_tunnel_kit.cli:main"
 

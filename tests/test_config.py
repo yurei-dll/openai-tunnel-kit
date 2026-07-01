@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openai_tunnel_kit.config import ConfigError, initialize_profile, read_environment, register_mcp
+from openai_tunnel_kit.config import ConfigError, initialize_profile, read_environment, register_mcp, set_tunnel_id
 
 
 class ConfigTests(unittest.TestCase):
@@ -81,6 +81,14 @@ class ConfigTests(unittest.TestCase):
     def test_rejects_unsafe_profile_name(self):
         with self.assertRaises(ConfigError):
             initialize_profile("../escape", root=self.root)
+
+    def test_set_tunnel_id_preserves_runtime_and_mcp_configuration(self):
+        paths = initialize_profile("work", root=self.root, tunnel_id="tunnel_old", api_key="sk-test")
+        set_tunnel_id("work", "tunnel_new", root=self.root)
+        environment = read_environment(paths.env)
+        self.assertEqual(environment["CONTROL_PLANE_TUNNEL_ID"], "tunnel_new")
+        self.assertEqual(environment["CONTROL_PLANE_API_KEY"], "sk-test")
+        self.assertIn("--mcp.command", environment["TUNNEL_CLIENT_MCP_ARGS"])
 
 
 if __name__ == "__main__":

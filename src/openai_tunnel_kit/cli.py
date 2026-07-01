@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import sys
@@ -16,6 +17,7 @@ from .config import (
     require_profile,
 )
 from .credentials import CREDENTIAL_NAME, encrypt_api_key
+from .control_plane import attach_tunnel, inspect_tunnel, provision_tunnel
 from .systemd import (
     doctor, install_service, instance_name, service_state, start_service, status,
     stop_service, unit_path, uninstall_service,
@@ -90,6 +92,23 @@ def parser() -> argparse.ArgumentParser:
     explain.add_argument("profile")
     setup = commands.add_parser("setup-env", help="create and start a profile from exported variables")
     setup.add_argument("--force", action="store_true")
+    wizard = commands.add_parser("wizard", help="launch the optional loopback setup wizard")
+    wizard.add_argument("--port", type=int, default=0, help="loopback port (default: choose automatically)")
+    wizard.add_argument("--no-browser", action="store_true", help="print the URL without opening a browser")
+
+    tunnels = commands.add_parser("tunnel", help="inspect, provision, and attach control-plane tunnels")
+    tunnel_commands = tunnels.add_subparsers(dest="tunnel_command", required=True)
+    tunnel_inspect = tunnel_commands.add_parser("inspect", help="show live backend tunnel metadata")
+    tunnel_inspect.add_argument("profile")
+    for action in ("attach", "provision"):
+        item = tunnel_commands.add_parser(action, help=f"{action} a control-plane tunnel")
+        item.add_argument("profile")
+        item.add_argument("--admin-key-file", type=Path, required=True)
+        item.add_argument("--organization-id", action="append", default=[])
+        item.add_argument("--workspace-id", action="append", default=[])
+        if action == "provision":
+            item.add_argument("--name", required=True)
+            item.add_argument("--description", required=True)
     internal = commands.add_parser("_run-service", help=argparse.SUPPRESS)
     commands._choices_actions.pop()
     internal.add_argument("profile")
@@ -204,16 +223,40 @@ def run(arguments: Optional[Sequence[str]] = None) -> int:
         api_key_file, mcp_file = os.environ.get("CONTROL_PLANE_API_KEY_FILE", ""), os.environ.get("OPENAI_TUNNEL_MCP_FILE", "")
         if api_key and api_key_file: raise ConfigError("set only one of CONTROL_PLANE_API_KEY or CONTROL_PLANE_API_KEY_FILE")
         if api_key_file: api_key = Path(api_key_file).expanduser().read_text(encoding="utf-8").strip()
-        if not tunnel_id: raise ConfigError("CONTROL_PLANE_TUNNEL_ID is required")
         if not api_key: raise ConfigError("CONTROL_PLANE_API_KEY or CONTROL_PLANE_API_KEY_FILE is required")
         if not mcp_file: raise ConfigError("OPENAI_TUNNEL_MCP_FILE is required")
         try: tunnel_args = shlex.split(os.environ.get("TUNNEL_CLIENT_ARGS", ""))
         except ValueError as exc: raise ConfigError(f"invalid TUNNEL_CLIENT_ARGS: {exc}") from exc
+        admin_key_file = os.environ.get("OPENAI_TUNNEL_ADMIN_KEY_FILE", "")
+        organization_ids = [value for value in os.environ.get("OPENAI_TUNNEL_ORGANIZATION_IDS", "").split(",") if value]
+        workspace_ids = [value for value in os.environ.get("OPENAI_TUNNEL_WORKSPACE_IDS", "").split(",") if value]
+        provisioning = not tunnel_id
+        if provisioning and not admin_key_file:
+            raise ConfigError("CONTROL_PLANE_TUNNEL_ID or OPENAI_TUNNEL_ADMIN_KEY_FILE is required")
         paths = initialize_profile(profile, os.environ.get("TUNNEL_CLIENT_BIN", "tunnel-client"), tunnel_args,
             Path(mcp_file).expanduser(), args.force, tunnel_id=tunnel_id, api_key="",
             pass_desktop_environment=environment_flag("OPENAI_TUNNEL_KIT_PASS_DESKTOP_ENVIRONMENT"))
+        if provisioning:
+            name = os.environ.get("OPENAI_TUNNEL_NAME", profile)
+            description = os.environ.get("OPENAI_TUNNEL_DESCRIPTION", f"Managed by openai-tunnel-kit profile {profile}")
+            provision_tunnel(profile, Path(admin_key_file), name, description, organization_ids, workspace_ids,
+                runtime_api_key=api_key)
         encrypt_api_key(api_key, paths.credential); install_service(profile, start=True)
         print(f"Configured {profile} with an encrypted API key\nEnabled and started {instance_name(profile)}"); return 0
+    if command == "wizard":
+        from .wizard import launch_wizard
+        launch_wizard(args.port, not args.no_browser)
+        return 0
+    if command == "tunnel":
+        if args.tunnel_command == "inspect":
+            payload = inspect_tunnel(args.profile)
+        elif args.tunnel_command == "attach":
+            payload = attach_tunnel(args.profile, args.admin_key_file, args.organization_id, args.workspace_id)
+        else:
+            payload = provision_tunnel(args.profile, args.admin_key_file, args.name, args.description,
+                args.organization_id, args.workspace_id)
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
     if command == "_run-service":
         paths = require_profile(args.profile); environment = read_environment(paths.env)
         if paths.credential.is_file():

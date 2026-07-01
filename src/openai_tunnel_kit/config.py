@@ -248,6 +248,35 @@ def register_mcp(profile: str, source: Path, root: Optional[Path] = None) -> Pat
     return paths.mcp
 
 
+def set_tunnel_id(profile: str, tunnel_id: str, root: Optional[Path] = None) -> Path:
+    if not tunnel_id or any(character in tunnel_id for character in "\n\r\0"):
+        raise ConfigError("tunnel ID must be a non-empty single-line value")
+    paths = require_profile(profile, root)
+    environment = read_environment(paths.env)
+    try:
+        arguments = shlex.split(environment.get("TUNNEL_CLIENT_ARGS", ""))
+    except ValueError as exc:
+        raise ConfigError(f"invalid TUNNEL_CLIENT_ARGS in {paths.env}: {exc}") from exc
+    launch = mcp_launch(load_mcp(paths.mcp))
+    extra_environment = {
+        key: value for key, value in environment.items() if key not in MANAGED_ENVIRONMENT_KEYS
+    }
+    write_text_atomic(
+        paths.env,
+        render_profile(
+            environment.get("TUNNEL_CLIENT_BIN", "tunnel-client"),
+            arguments,
+            tunnel_id,
+            environment.get("CONTROL_PLANE_API_KEY", ""),
+            launch.arguments,
+            extra_environment,
+            environment.get("OPENAI_TUNNEL_KIT_PASS_DESKTOP_ENVIRONMENT", "").lower()
+            in {"1", "true", "yes"},
+        ),
+    )
+    return paths.env
+
+
 def require_profile(profile: str, root: Optional[Path] = None) -> ProfilePaths:
     paths = profile_paths(profile, root)
     if not paths.env.is_file():
