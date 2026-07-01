@@ -38,6 +38,13 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "already exists"):
             initialize_profile("work", root=self.root)
 
+    def test_explicit_plaintext_key_replaces_encrypted_credential(self):
+        paths = initialize_profile("work", root=self.root)
+        paths.credential.parent.mkdir(parents=True)
+        paths.credential.write_text("encrypted")
+        initialize_profile("work", root=self.root, force=True, api_key="sk-new")
+        self.assertFalse(paths.credential.exists())
+
     def test_force_preserves_existing_mcp(self):
         paths = initialize_profile("work", root=self.root)
         paths.mcp.write_text(

@@ -25,6 +25,18 @@ MANAGED_ENVIRONMENT_KEYS = {
 }
 
 
+def environment_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{name} must be true or false")
+
+
 class ConfigError(RuntimeError):
     pass
 
@@ -63,6 +75,10 @@ class ProfilePaths:
     @property
     def mcp(self) -> Path:
         return self.root / "profiles" / f"{self.name}.mcp.json"
+
+    @property
+    def credential(self) -> Path:
+        return self.root / "credentials" / f"{self.name}.api-key.cred"
 
 
 def profile_paths(profile: str, root: Optional[Path] = None) -> ProfilePaths:
@@ -187,6 +203,11 @@ def initialize_profile(
             pass_desktop_environment,
         ),
     )
+    if api_key:
+        # An explicitly supplied plaintext key switches the profile back to the
+        # legacy EnvironmentFile path instead of silently retaining an older
+        # encrypted credential.
+        paths.credential.unlink(missing_ok=True)
     return paths
 
 
@@ -230,7 +251,10 @@ def register_mcp(profile: str, source: Path, root: Optional[Path] = None) -> Pat
 def require_profile(profile: str, root: Optional[Path] = None) -> ProfilePaths:
     paths = profile_paths(profile, root)
     if not paths.env.is_file():
-        raise ConfigError(f"profile not found: {profile}; run 'openai-tunnel-kit init {profile}'")
+        raise ConfigError(
+            f"profile not found: {profile}; run "
+            f"'openai-tunnel-kit profile init {profile}'"
+        )
     return paths
 
 
@@ -243,6 +267,7 @@ def remove_profile(profile: str, root: Optional[Path] = None) -> ProfilePaths:
     paths = require_profile(profile, root)
     paths.env.unlink()
     paths.mcp.unlink(missing_ok=True)
+    paths.credential.unlink(missing_ok=True)
     return paths
 
 
