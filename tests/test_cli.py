@@ -96,6 +96,41 @@ class CliTests(unittest.TestCase):
         install.assert_called_once_with("demo", True)
         self.assertIn("enabled and started", output)
 
+    @patch("openai_tunnel_kit.cli.install_service")
+    @patch("openai_tunnel_kit.cli.encrypt_api_key")
+    def test_setup_env_builds_complete_encrypted_profile(self, encrypt, install):
+        mcp = self.root / "mcp.json"
+        mcp.write_text('{"mcpServers":{"demo":{"command":"server","args":[]}}}')
+        variables = {
+            "OPENAI_TUNNEL_PROFILE": "work",
+            "CONTROL_PLANE_TUNNEL_ID": "tunnel_example",
+            "CONTROL_PLANE_API_KEY": "sk-transient",
+            "OPENAI_TUNNEL_MCP_FILE": str(mcp),
+            "TUNNEL_CLIENT_BIN": "/opt/bin/tunnel-client",
+        }
+        with patch.dict(os.environ, variables):
+            code, output, error = self.invoke(["setup-env"])
+        self.assertEqual((code, error), (0, ""))
+        profile = self.root / "profiles" / "work.env"
+        profile_text = profile.read_text()
+        self.assertNotIn("sk-transient", profile_text)
+        self.assertIn("--mcp.command", profile_text)
+        self.assertIn("command=server,channel=main", profile_text)
+        encrypt.assert_called_once_with("sk-transient", self.root / "credentials" / "work.api-key.cred")
+        install.assert_called_once_with("work", start=True)
+        self.assertIn("encrypted API key", output)
+
+    def test_setup_env_requires_mcp_file_pointer(self):
+        variables = {
+            "OPENAI_TUNNEL_PROFILE": "work",
+            "CONTROL_PLANE_TUNNEL_ID": "tunnel_example",
+            "CONTROL_PLANE_API_KEY": "sk-transient",
+        }
+        with patch.dict(os.environ, variables, clear=True):
+            code, _, error = self.invoke(["setup-env"])
+        self.assertEqual(code, 2)
+        self.assertIn("OPENAI_TUNNEL_MCP_FILE is required", error)
+
 
 if __name__ == "__main__":
     unittest.main()

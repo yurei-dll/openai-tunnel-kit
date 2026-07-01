@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
@@ -64,7 +65,15 @@ def install_service(profile: str, start: bool = True, root: Optional[Path] = Non
     if shutil.which("systemctl") is None:
         raise ConfigError("systemctl was not found; systemd user services are required")
     destination = unit_path()
-    write_text_atomic(destination, render_systemd_unit(root or config_dir()), mode=0o644)
+    write_text_atomic(
+        destination,
+        render_systemd_unit(
+            root or config_dir(),
+            Path(sys.argv[0]).resolve(),
+            paths.credential.is_file(),
+        ),
+        mode=0o644,
+    )
     environment = read_environment(paths.env)
     pass_desktop_environment = environment.get(
         "OPENAI_TUNNEL_KIT_PASS_DESKTOP_ENVIRONMENT", ""
@@ -141,6 +150,7 @@ def doctor(profile: Optional[str] = None, root: Optional[Path] = None) -> list[C
             environment = read_environment(paths.env)
             tunnel_id = environment.get("CONTROL_PLANE_TUNNEL_ID", "")
             api_key = environment.get("CONTROL_PLANE_API_KEY", "")
+            encrypted_api_key = paths.credential.is_file()
             checks.append(
                 Check(
                     bool(tunnel_id),
@@ -150,9 +160,11 @@ def doctor(profile: Optional[str] = None, root: Optional[Path] = None) -> list[C
             )
             checks.append(
                 Check(
-                    bool(api_key),
+                    bool(api_key) or encrypted_api_key,
                     f"profile {name} API key",
-                    "configured" if api_key else "missing; use init --api-key-file or edit the profile",
+                    "encrypted credential"
+                    if encrypted_api_key
+                    else ("configured" if api_key else "missing; use setup-env or init --api-key-file"),
                 )
             )
             binary = environment.get("TUNNEL_CLIENT_BIN", "")

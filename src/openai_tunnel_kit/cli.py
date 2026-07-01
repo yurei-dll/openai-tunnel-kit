@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
@@ -10,15 +12,18 @@ from typing import Optional, Sequence
 from . import __version__
 from .config import (
     ConfigError,
+    environment_flag,
     initialize_profile,
     list_profiles,
     load_mcp,
     normalize_mcp,
+    read_environment,
     register_mcp,
     remove_profile,
     require_profile,
 )
 from .systemd import doctor, install_service, status, uninstall_service
+from .credentials import CREDENTIAL_NAME, encrypt_api_key
 
 
 def parser() -> argparse.ArgumentParser:
@@ -55,6 +60,15 @@ def parser() -> argparse.ArgumentParser:
     install = commands.add_parser("install-service", help="install, enable, and start a profile service")
     install.add_argument("profile")
     install.add_argument("--no-start", action="store_true", help="enable without starting now")
+
+    setup = commands.add_parser("setup-env", help="create and start a complete profile from exported variables")
+    setup.add_argument("--force", action="store_true", help="replace an existing profile")
+
+    internal = commands.add_parser(
+        "_run-service",
+        help="internal service launcher (normally called by systemd)",
+    )
+    internal.add_argument("profile")
 
     state = commands.add_parser("status", help="show systemd status for a profile")
     state.add_argument("profile")
@@ -116,6 +130,64 @@ def run(arguments: Optional[Sequence[str]] = None) -> int:
         action = "enabled" if args.no_start else "enabled and started"
         print(f"Installed {path}; tunnel-client@{args.profile}.service is {action}")
         return 0
+    if args.command == "setup-env":
+        profile = os.environ.get("OPENAI_TUNNEL_PROFILE", "default")
+        tunnel_id = os.environ.get("CONTROL_PLANE_TUNNEL_ID", "")
+        api_key = os.environ.get("CONTROL_PLANE_API_KEY", "")
+        api_key_file = os.environ.get("CONTROL_PLANE_API_KEY_FILE", "")
+        if api_key and api_key_file:
+            raise ConfigError("set only one of CONTROL_PLANE_API_KEY or CONTROL_PLANE_API_KEY_FILE")
+        if api_key_file:
+            key_path = Path(api_key_file).expanduser()
+            api_key = key_path.read_text(encoding="utf-8").strip()
+        mcp_file = os.environ.get("OPENAI_TUNNEL_MCP_FILE", "")
+        if not tunnel_id:
+            raise ConfigError("CONTROL_PLANE_TUNNEL_ID is required")
+        if not api_key:
+            raise ConfigError("CONTROL_PLANE_API_KEY or CONTROL_PLANE_API_KEY_FILE is required")
+        if not mcp_file:
+            raise ConfigError("OPENAI_TUNNEL_MCP_FILE is required")
+        try:
+            tunnel_args = shlex.split(os.environ.get("TUNNEL_CLIENT_ARGS", ""))
+        except ValueError as exc:
+            raise ConfigError(f"invalid TUNNEL_CLIENT_ARGS: {exc}") from exc
+        paths = initialize_profile(
+            profile,
+            os.environ.get("TUNNEL_CLIENT_BIN", "tunnel-client"),
+            tunnel_args,
+            Path(mcp_file).expanduser(),
+            args.force,
+            tunnel_id=tunnel_id,
+            api_key="",
+            pass_desktop_environment=environment_flag(
+                "OPENAI_TUNNEL_KIT_PASS_DESKTOP_ENVIRONMENT"
+            ),
+        )
+        encrypt_api_key(api_key, paths.credential)
+        install_service(profile, start=True)
+        print(f"Configured {profile} with an encrypted API key")
+        print(f"Enabled and started tunnel-client@{profile}.service")
+        return 0
+    if args.command == "_run-service":
+        paths = require_profile(args.profile)
+        environment = read_environment(paths.env)
+        credential_directory = os.environ.get("CREDENTIALS_DIRECTORY", "")
+        if paths.credential.is_file():
+            if not credential_directory:
+                raise ConfigError("systemd did not provide CREDENTIALS_DIRECTORY")
+            credential = Path(credential_directory) / CREDENTIAL_NAME
+            environment[CREDENTIAL_NAME] = credential.read_text(encoding="utf-8").strip()
+        try:
+            command = [
+                environment.get("TUNNEL_CLIENT_BIN", "tunnel-client"),
+                "run",
+                *shlex.split(environment.get("TUNNEL_CLIENT_ARGS", "")),
+                *shlex.split(environment.get("TUNNEL_CLIENT_MCP_ARGS", "")),
+            ]
+        except ValueError as exc:
+            raise ConfigError(f"invalid profile arguments: {exc}") from exc
+        os.execvpe(command[0], command, {**os.environ, **environment})
+        raise AssertionError("os.execvpe returned")
     if args.command == "status":
         require_profile(args.profile)
         return status(args.profile)

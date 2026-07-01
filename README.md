@@ -72,6 +72,36 @@ openai-tunnel-kit install-service my-profile
 systemctl --user status tunnel-client@my-profile
 ```
 
+### One-shot setup from an environment file
+
+For a source-and-run installation, copy
+[`examples/setup.env.example`](examples/setup.env.example), set its paths, and
+run:
+
+```console
+source /path/to/setup.env
+openai-tunnel-kit setup-env
+```
+
+`setup-env` validates and copies the MCP configuration, creates the profile,
+encrypts the runtime API key with `systemd-creds --user`, installs the systemd
+user unit, and enables and starts it. The key is decrypted by systemd only for
+the running service and is not written to the generated profile `.env`.
+
+The recommended `CONTROL_PLANE_API_KEY_FILE` variable points to a file
+containing only the key. It keeps the secret out of the sourceable setup file
+and shell history; the source file still contains every value needed to locate
+and install the setup. `CONTROL_PLANE_API_KEY` is accepted as an alternative
+for secrets supplied transiently by a password manager or provisioning system.
+Do not commit either the key file or a setup file containing a literal key.
+
+This flow requires a systemd release with user-scoped encrypted credentials
+(`systemd-creds encrypt --user`). Encryption is tied to the local user/host, so
+rerun `setup-env --force` on a new machine rather than copying the encrypted
+credential. Environment values embedded in the MCP JSON are still stored in
+the mode-`0600` profile; keep sensitive MCP-server values in that server's own
+secret store when possible.
+
 The two OpenAI values have first-class options:
 
 - `--tunnel-id` sets `CONTROL_PLANE_TUNNEL_ID`. Create or find the ID in
@@ -137,6 +167,7 @@ openai-tunnel-kit init <profile> [--tunnel-id ID] [--api-key-file FILE | --api-k
                                [--binary PATH] [--arg ARG] [--mcp-file FILE]
                                [--pass-desktop-environment]
 openai-tunnel-kit install-service <profile> [--no-start]
+openai-tunnel-kit setup-env [--force]
 openai-tunnel-kit status <profile>
 openai-tunnel-kit print-mcp <profile>
 openai-tunnel-kit set-mcp <profile> <file>
@@ -198,6 +229,10 @@ private (the toolkit writes it with mode `0600`).
 openai-tunnel-kit install-service my-profile
 openai-tunnel-kit doctor my-profile
 ```
+
+Profiles created by `setup-env` use a host-bound encrypted credential and
+should instead be reproduced from the original setup environment and key
+source.
 
 For isolated tests or managed environments, set
 `OPENAI_TUNNEL_KIT_CONFIG_DIR` to override the profile directory. Install the

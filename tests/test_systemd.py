@@ -19,6 +19,19 @@ class SystemdTests(unittest.TestCase):
         self.assertIn("Restart=on-failure", unit)
         self.assertIn("WantedBy=default.target", unit)
 
+    def test_encrypted_unit_loads_credential_and_uses_launcher(self):
+        unit = render_systemd_unit(
+            Path("/home/example/.config/openai-tunnel-kit"),
+            Path("/opt/bin/openai-tunnel-kit"),
+            encrypted_credentials=True,
+        )
+        self.assertIn(
+            "LoadCredentialEncrypted=CONTROL_PLANE_API_KEY:/home/example/.config/"
+            "openai-tunnel-kit/credentials/%i.api-key.cred",
+            unit,
+        )
+        self.assertIn("ExecStart=/opt/bin/openai-tunnel-kit _run-service %i", unit)
+
     @patch("openai_tunnel_kit.systemd.write_text_atomic")
     @patch("openai_tunnel_kit.systemd.run_systemctl")
     def test_install_reloads_enables_and_starts(self, systemctl, write):

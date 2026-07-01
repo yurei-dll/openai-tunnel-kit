@@ -48,8 +48,19 @@ def render_profile(
     return "".join(lines)
 
 
-def render_systemd_unit(config_dir: Path) -> str:
+def render_systemd_unit(
+    config_dir: Path,
+    launcher: Optional[Path] = None,
+    encrypted_credentials: bool = False,
+) -> str:
     environment_file = config_dir / "profiles" / "%i.env"
+    if launcher and encrypted_credentials:
+        credential = config_dir / "credentials" / "%i.api-key.cred"
+        credential_line = f"LoadCredentialEncrypted=CONTROL_PLANE_API_KEY:{credential}\n"
+        exec_start = f"{launcher} _run-service %i"
+    else:
+        credential_line = ""
+        exec_start = "/usr/bin/env ${TUNNEL_CLIENT_BIN} run $TUNNEL_CLIENT_ARGS $TUNNEL_CLIENT_MCP_ARGS"
     return f"""[Unit]
 Description=OpenAI tunnel-client profile %i
 After=network-online.target
@@ -58,7 +69,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile={environment_file}
-ExecStart=/usr/bin/env ${{TUNNEL_CLIENT_BIN}} run $TUNNEL_CLIENT_ARGS $TUNNEL_CLIENT_MCP_ARGS
+{credential_line}ExecStart={exec_start}
 Restart=on-failure
 RestartSec=5s
 
