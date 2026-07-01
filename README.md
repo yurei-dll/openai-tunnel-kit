@@ -214,6 +214,11 @@ openai-tunnel-kit doctor my-profile
 journalctl --user -u tunnel-client@my-profile.service
 ```
 
+Service health is based on systemd's exact active and sub-state. In particular,
+an `activating (auto-restart)` service whose process keeps exiting is reported
+as failed, not running; the diagnostic includes its result, exit status, and
+restart count.
+
 Enabled user services start whenever the user's systemd manager starts. Most
 desktop/server login sessions do this at login. To start user services at boot
 before login, an administrator may enable lingering:

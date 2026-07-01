@@ -4,11 +4,26 @@ from pathlib import Path
 from unittest.mock import call, patch
 
 from openai_tunnel_kit.config import initialize_profile
-from openai_tunnel_kit.systemd import install_service
+from openai_tunnel_kit.systemd import inspect_service, install_service
 from openai_tunnel_kit.templates import render_desktop_environment_drop_in, render_systemd_unit
 
 
 class SystemdTests(unittest.TestCase):
+    @patch("openai_tunnel_kit.systemd.shutil.which", return_value="/usr/bin/systemctl")
+    @patch("openai_tunnel_kit.systemd.subprocess.run")
+    def test_auto_restart_is_not_reported_as_running(self, run, _which):
+        run.return_value.returncode = 0
+        run.return_value.stdout = (
+            "UnitFileState=enabled\nActiveState=activating\n"
+            "SubState=auto-restart\nResult=exit-code\n"
+            "ExecMainStatus=1\nNRestarts=37\n"
+        )
+        state = inspect_service("demo")
+        self.assertTrue(state.enabled)
+        self.assertFalse(state.running)
+        self.assertIn("activating/auto-restart", state.detail)
+        self.assertIn("exit=1", state.detail)
+
     def test_unit_is_user_template_with_restart_and_environment_file(self):
         unit = render_systemd_unit(Path("/home/example/.config/openai-tunnel-kit"))
         self.assertIn("EnvironmentFile=/home/example/.config/openai-tunnel-kit/profiles/%i.env", unit)

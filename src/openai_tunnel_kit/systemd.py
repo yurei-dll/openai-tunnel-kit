@@ -110,21 +110,60 @@ def stop_service(profile: str) -> None:
     run_systemctl(["stop", instance_name(profile)])
 
 
-def service_state(profile: str) -> tuple[bool, bool]:
-    """Return (enabled, active) without printing systemctl's answers."""
+@dataclass(frozen=True)
+class ServiceState:
+    enabled: bool
+    running: bool
+    active_state: str = "unknown"
+    sub_state: str = "unknown"
+    result: str = "unknown"
+    exit_status: str = "unknown"
+    restarts: str = "0"
+
+    @property
+    def detail(self) -> str:
+        detail = f"{self.active_state}/{self.sub_state}"
+        if self.result not in {"", "success", "unknown"}:
+            detail += f", result={self.result}, exit={self.exit_status}"
+        if self.restarts not in {"", "0"}:
+            detail += f", restarts={self.restarts}"
+        return detail
+
+
+def inspect_service(profile: str) -> ServiceState:
+    """Read exact unit state; 'activating/auto-restart' is not running."""
     if shutil.which("systemctl") is None:
-        return False, False
+        return ServiceState(False, False)
+    result = subprocess.run(
+        [
+            "systemctl", "--user", "show", instance_name(profile),
+            "--property=UnitFileState", "--property=ActiveState",
+            "--property=SubState", "--property=Result",
+            "--property=ExecMainStatus", "--property=NRestarts", "--no-pager",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    values = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+    active_state = values.get("ActiveState", "unknown")
+    sub_state = values.get("SubState", "unknown")
+    return ServiceState(
+        enabled=values.get("UnitFileState") in {"enabled", "enabled-runtime", "linked", "linked-runtime"},
+        running=active_state == "active" and sub_state == "running",
+        active_state=active_state,
+        sub_state=sub_state,
+        result=values.get("Result", "unknown"),
+        exit_status=values.get("ExecMainStatus", "unknown"),
+        restarts=values.get("NRestarts", "0"),
+    )
 
-    def probe(operation: str) -> bool:
-        result = subprocess.run(
-            ["systemctl", "--user", operation, instance_name(profile)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        return result.returncode == 0
 
-    return probe("is-enabled"), probe("is-active")
+def service_state(profile: str) -> tuple[bool, bool]:
+    state = inspect_service(profile)
+    return state.enabled, state.running
 
 
 def uninstall_service(profile: str) -> None:
@@ -185,13 +224,28 @@ def doctor(profile: Optional[str] = None, root: Optional[Path] = None) -> list[C
                     "configured" if tunnel_id else "missing; use init --tunnel-id or edit the profile",
                 )
             )
+            service = inspect_service(name)
+            checks.append(
+                Check(
+                    service.enabled,
+                    f"profile {name} service enabled",
+                    service.detail if service.enabled else f"disabled ({service.detail}); run openai-tunnel-kit service install {name}",
+                )
+            )
+            checks.append(
+                Check(
+                    service.running,
+                    f"profile {name} service running",
+                    service.detail if service.running else f"not running ({service.detail}); check openai-tunnel-kit service status {name}",
+                )
+            )
             checks.append(
                 Check(
                     bool(api_key) or encrypted_api_key,
                     f"profile {name} API key",
                     "encrypted credential"
                     if encrypted_api_key
-                    else ("configured" if api_key else "missing; use setup-env or init --api-key-file"),
+                    else ("configured" if api_key else "missing; use setup-env or profile init --api-key-file"),
                 )
             )
             binary = environment.get("TUNNEL_CLIENT_BIN", "")
