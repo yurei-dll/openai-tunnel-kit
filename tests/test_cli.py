@@ -112,7 +112,7 @@ class CliTests(unittest.TestCase):
         install.return_value = self.root / "tunnel-client@.service"
         code, output, _ = self.invoke(["install-service", "demo"])
         self.assertEqual(code, 0)
-        install.assert_called_once_with("demo", True)
+        install.assert_called_once_with("demo", True, force=False)
         self.assertIn("enabled and started", output)
 
     @patch("openai_tunnel_kit.cli.install_service")

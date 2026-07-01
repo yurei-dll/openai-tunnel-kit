@@ -67,6 +67,7 @@ def parser() -> argparse.ArgumentParser:
     install = service_commands.add_parser("install", help="install, enable, and start a service")
     install.add_argument("profile")
     install.add_argument("--no-start", action="store_true", help="enable without starting now")
+    install.add_argument("--force", action="store_true", help="install despite credential preflight failures")
     for name, help_text in (("start", "start a service"), ("stop", "stop a service"), ("status", "show service status")):
         item = service_commands.add_parser(name, help=help_text)
         item.add_argument("profile")
@@ -102,7 +103,9 @@ def parser() -> argparse.ArgumentParser:
         commands._choices_actions.pop()
         if profile_arg:
             item.add_argument("profile")
-        if old == "install-service": item.add_argument("--no-start", action="store_true")
+        if old == "install-service":
+            item.add_argument("--no-start", action="store_true")
+            item.add_argument("--force", action="store_true")
         if old == "uninstall": item.add_argument("--purge", action="store_true")
     old_set = commands.add_parser("set-mcp", help=argparse.SUPPRESS)
     commands._choices_actions.pop()
@@ -192,7 +195,7 @@ def run(arguments: Optional[Sequence[str]] = None) -> int:
     if command == "service": command = args.service_command
     if command == "mcp": command = {"add": "set-mcp", "print": "print-mcp", "list": "mcp-list"}[args.mcp_command]
     if command in {"install", "install-service"}:
-        path = install_service(args.profile, not args.no_start)
+        path = install_service(args.profile, not args.no_start, force=args.force)
         action = "enabled" if args.no_start else "enabled and started"
         print(f"Installed {path}; {instance_name(args.profile)} is {action}"); return 0
     if command == "setup-env":

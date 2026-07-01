@@ -12,6 +12,7 @@ from typing import Optional, Sequence
 
 from .config import ConfigError, config_dir, read_environment, require_profile, write_text_atomic
 from .templates import render_desktop_environment_drop_in, render_systemd_unit
+from .credentials import CREDENTIAL_NAME
 
 
 UNIT_NAME = "tunnel-client@.service"
@@ -60,8 +61,50 @@ def run_systemctl(arguments: Sequence[str], check: bool = True) -> subprocess.Co
         raise ConfigError(f"command failed ({exc.returncode}): {command}") from exc
 
 
-def install_service(profile: str, start: bool = True, root: Optional[Path] = None) -> Path:
+def credential_problem(profile: str, root: Optional[Path] = None) -> Optional[str]:
     paths = require_profile(profile, root)
+    environment = read_environment(paths.env)
+    plaintext = bool(environment.get(CREDENTIAL_NAME, ""))
+    encrypted = paths.credential.is_file()
+    if plaintext and encrypted:
+        return "both plaintext and encrypted API-key credentials are configured"
+    if not plaintext and not encrypted:
+        return "CONTROL_PLANE_API_KEY is missing"
+    if not encrypted:
+        return None
+    executable = shutil.which("systemd-creds")
+    if not executable:
+        return "encrypted credential exists but systemd-creds is unavailable"
+    result = subprocess.run(
+        [
+            executable, "decrypt", "--user", f"--name={CREDENTIAL_NAME}",
+            str(paths.credential), "-",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode:
+        detail = result.stderr.strip().splitlines()
+        return f"encrypted credential cannot be decrypted: {detail[-1] if detail else 'systemd-creds failed'}"
+    return None
+
+
+def install_service(
+    profile: str,
+    start: bool = True,
+    root: Optional[Path] = None,
+    force: bool = False,
+) -> Path:
+    paths = require_profile(profile, root)
+    problem = credential_problem(profile, root)
+    if problem and not force:
+        raise ConfigError(
+            f"credential preflight failed: {problem}; repair the profile or rerun "
+            f"'openai-tunnel-kit service install {profile} --force'"
+        )
+    if problem:
+        print(f"WARNING: credential preflight failed: {problem}; continuing due to --force", file=sys.stderr)
     if shutil.which("systemctl") is None:
         raise ConfigError("systemctl was not found; systemd user services are required")
     destination = unit_path()
@@ -202,7 +245,13 @@ def doctor(profile: Optional[str] = None, root: Optional[Path] = None) -> list[C
 
     profiles = [profile] if profile else sorted(path.stem for path in (root / "profiles").glob("*.env"))
     if not profiles:
-        checks.append(Check(False, "profiles", "none found; run 'openai-tunnel-kit init <profile>'"))
+        checks.append(
+            Check(
+                False,
+                "profiles",
+                "none found; run 'openai-tunnel-kit profile init <profile>'",
+            )
+        )
         return checks
 
     from .config import load_mcp, mcp_launch, profile_paths, read_environment
