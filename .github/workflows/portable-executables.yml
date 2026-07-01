@@ -63,8 +63,8 @@ jobs:
         run: |
           ./dist/openai-tunnel-kit --version
           config_dir="$(mktemp -d)"
-          OPENAI_TUNNEL_KIT_CONFIG_DIR="$config_dir" ./dist/openai-tunnel-kit init smoke --binary /bin/true
-          OPENAI_TUNNEL_KIT_CONFIG_DIR="$config_dir" ./dist/openai-tunnel-kit list-profiles | grep -Fx smoke
+          OPENAI_TUNNEL_KIT_CONFIG_DIR="$config_dir" ./dist/openai-tunnel-kit profile init smoke --binary /bin/true
+          OPENAI_TUNNEL_KIT_CONFIG_DIR="$config_dir" ./dist/openai-tunnel-kit profile list | grep -Fx smoke
 
       - name: Package executable and checksum
         env:
