@@ -26,7 +26,7 @@ openai-tunnel-kit doctor
 
 ## Milestone 2: Command Layer Split
 
-Restructure commands around the actual layers of the tool.
+Restructure commands around the actual layers of the tool. **Complete.**
 
 Target shape:
 
@@ -41,7 +41,7 @@ openai-tunnel-kit service start <profile>
 openai-tunnel-kit service stop <profile>
 openai-tunnel-kit service status <profile>
 
-openai-tunnel-kit mcp add <profile>
+openai-tunnel-kit mcp add <profile> <file>
 openai-tunnel-kit mcp list <profile>
 openai-tunnel-kit mcp print <profile>
 
@@ -58,7 +58,7 @@ The implementation should keep these layers separate internally:
 
 ## Milestone 3: `explain <profile>`
 
-Add a human-readable inspection command.
+Add a human-readable inspection command. **Complete.**
 
 `openai-tunnel-kit explain <profile>` should show:
 

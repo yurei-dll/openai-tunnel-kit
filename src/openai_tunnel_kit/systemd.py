@@ -100,6 +100,33 @@ def status(profile: str) -> int:
     return result.returncode
 
 
+def start_service(profile: str) -> None:
+    require_profile(profile)
+    run_systemctl(["start", instance_name(profile)])
+
+
+def stop_service(profile: str) -> None:
+    require_profile(profile)
+    run_systemctl(["stop", instance_name(profile)])
+
+
+def service_state(profile: str) -> tuple[bool, bool]:
+    """Return (enabled, active) without printing systemctl's answers."""
+    if shutil.which("systemctl") is None:
+        return False, False
+
+    def probe(operation: str) -> bool:
+        result = subprocess.run(
+            ["systemctl", "--user", operation, instance_name(profile)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return result.returncode == 0
+
+    return probe("is-enabled"), probe("is-active")
+
+
 def uninstall_service(profile: str) -> None:
     if not unit_path().is_file():
         remove_desktop_drop_in(profile)

@@ -251,7 +251,10 @@ def register_mcp(profile: str, source: Path, root: Optional[Path] = None) -> Pat
 def require_profile(profile: str, root: Optional[Path] = None) -> ProfilePaths:
     paths = profile_paths(profile, root)
     if not paths.env.is_file():
-        raise ConfigError(f"profile not found: {profile}; run 'openai-tunnel-kit init {profile}'")
+        raise ConfigError(
+            f"profile not found: {profile}; run "
+            f"'openai-tunnel-kit profile init {profile}'"
+        )
     return paths
 
 
