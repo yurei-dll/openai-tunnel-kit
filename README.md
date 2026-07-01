@@ -167,7 +167,7 @@ openai-tunnel-kit profile init <profile> [options]
 openai-tunnel-kit profile list
 openai-tunnel-kit profile show <profile>
 openai-tunnel-kit profile remove <profile>
-openai-tunnel-kit service install <profile> [--no-start]
+openai-tunnel-kit service install <profile> [--no-start] [--force]
 openai-tunnel-kit service start|stop|status <profile>
 openai-tunnel-kit service uninstall <profile> [--purge]
 openai-tunnel-kit mcp add <profile> <file>
@@ -188,6 +188,13 @@ Secret-like values are reported as set or unset but are never printed.
 `~/.config/systemd/user/tunnel-client@.service`, reloads the user manager, and
 enables and starts the requested instance. The unit uses `Restart=on-failure`
 and is enabled under `default.target`.
+
+Before changing systemd state, `service install` requires one usable API-key
+source: either a non-empty profile value or an encrypted credential that can be
+decrypted on the current host. Missing, conflicting, and undecryptable
+credentials stop installation with an actionable error. `--force` overrides
+that guardrail and prints a warning; it is intended for deliberate diagnostics,
+not normal setup.
 
 `service uninstall` disables and stops the instance but retains its reproducible config.
 Add `--purge` to delete the profile files too.
