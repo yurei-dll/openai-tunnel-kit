@@ -5,7 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from openai_tunnel_kit.config import ConfigError, read_environment, set_tunnel_id
-from openai_tunnel_kit.wizard import _target_config, run_setup
+from openai_tunnel_kit.wizard import _html, _target_config, run_setup
+from openai_tunnel_kit.platform_admin import ServiceAccountCredential
 
 
 class WizardTests(unittest.TestCase):
@@ -28,6 +29,7 @@ class WizardTests(unittest.TestCase):
             "tunnel_mode": "existing",
             "tunnel_id": "tunnel_demo",
             "runtime_api_key": "sk-runtime",
+            "credential_mode": "existing",
             "install_service": True,
         }
 
@@ -45,10 +47,39 @@ class WizardTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "confirmation"):
             run_setup(payload)
 
+    def test_required_fields_have_visible_red_markers(self):
+        html = _html("test-token")
+        self.assertIn('.req{color:#ff5c5c', html)
+        self.assertIn('Profile name <span class="req"', html)
+        self.assertIn('At least one organization or workspace ID is required', html)
+
+    @patch("openai_tunnel_kit.wizard.create_service_account")
+    def test_missing_tunnel_scope_fails_before_external_mutation(self, create_account):
+        payload = self.payload()
+        payload.update({
+            "credential_mode": "automatic",
+            "tunnel_mode": "provision",
+            "tunnel_id": "",
+            "admin_api_key": "sk-admin",
+            "project_id": "proj_1",
+            "runtime_api_key": "",
+        })
+        with self.assertRaisesRegex(ConfigError, "no account, tunnel, or profile was created"):
+            run_setup(payload)
+        create_account.assert_not_called()
+        self.assertFalse((self.root / "profiles" / "demo.env").exists())
+
+    def test_incomplete_profile_has_safe_retry_guidance(self):
+        from openai_tunnel_kit.config import initialize_profile
+        initialize_profile("demo", root=self.root)
+        with self.assertRaisesRegex(ConfigError, "enable 'Replace existing profile'"):
+            run_setup(self.payload())
+
     @patch("openai_tunnel_kit.wizard.install_service")
+    @patch("openai_tunnel_kit.wizard.wait_for_service")
     @patch("openai_tunnel_kit.wizard.encrypt_api_key")
     @patch("openai_tunnel_kit.wizard.inspect_tunnel")
-    def test_existing_tunnel_setup_removes_plaintext_runtime_key(self, inspect, encrypt, install):
+    def test_existing_tunnel_setup_removes_plaintext_runtime_key(self, inspect, encrypt, wait, install):
         inspect.return_value = {"id": "tunnel_demo", "organization_ids": ["org_1"]}
         result = run_setup(self.payload())
         profile = read_environment(self.root / "profiles" / "demo.env")
@@ -57,27 +88,56 @@ class WizardTests(unittest.TestCase):
         self.assertFalse(result["workspace_attached"])
         encrypt.assert_called_once_with("sk-runtime", self.root / "credentials" / "demo.api-key.cred")
         install.assert_called_once_with("demo", start=True)
+        wait.assert_called_once_with("demo")
 
     @patch("openai_tunnel_kit.wizard.install_service")
+    @patch("openai_tunnel_kit.wizard.wait_for_service")
     @patch("openai_tunnel_kit.wizard.encrypt_api_key")
     @patch("openai_tunnel_kit.wizard.provision_tunnel")
-    def test_provision_uses_explicit_scopes_and_returns_handoff(self, provision, _encrypt, _install):
+    @patch("openai_tunnel_kit.wizard.create_service_account")
+    def test_provision_uses_explicit_scopes_and_returns_handoff(self, create_account, provision, _encrypt, _wait, _install):
         def create(profile, *_args, **_kwargs):
             set_tunnel_id(profile, "tunnel_new")
             return {"id": "tunnel_new", "workspace_ids": ["ws_1"]}
 
         provision.side_effect = create
+        create_account.return_value = ServiceAccountCredential("svc_1", "key_1", "sk-generated")
         payload = self.payload()
         payload.update({
+            "credential_mode": "automatic",
             "tunnel_mode": "provision",
             "tunnel_id": "",
             "admin_api_key": "sk-admin",
+            "project_id": "proj_1",
+            "runtime_api_key": "",
             "workspace_ids": "ws_1",
         })
         result = run_setup(payload)
         self.assertTrue(result["workspace_attached"])
         self.assertIn("select this tunnel", result["next"])
         self.assertNotIn("sk-admin", (self.root / "profiles" / "demo.env").read_text())
+        self.assertNotIn("sk-generated", (self.root / "profiles" / "demo.env").read_text())
+
+    @patch("openai_tunnel_kit.wizard.delete_service_account")
+    @patch("openai_tunnel_kit.wizard.create_service_account")
+    @patch("openai_tunnel_kit.wizard.provision_tunnel")
+    def test_failed_provision_rolls_back_new_service_account(self, provision, create_account, delete_account):
+        create_account.return_value = ServiceAccountCredential("svc_1", "key_1", "sk-generated")
+        provision.side_effect = ConfigError("tunnel create denied")
+        payload = self.payload()
+        payload.update({
+            "credential_mode": "automatic",
+            "tunnel_mode": "provision",
+            "tunnel_id": "",
+            "admin_api_key": "sk-admin",
+            "project_id": "proj_1",
+            "runtime_api_key": "",
+            "organization_ids": "org_1",
+        })
+        with self.assertRaisesRegex(ConfigError, "tunnel create denied"):
+            run_setup(payload)
+        delete_account.assert_called_once_with("sk-admin", "proj_1", "svc_1")
+        self.assertFalse((self.root / "profiles" / "demo.env").exists())
 
 
 if __name__ == "__main__":
