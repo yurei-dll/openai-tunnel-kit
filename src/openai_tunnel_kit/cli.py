@@ -16,7 +16,7 @@ from .config import (
     mcp_launch, normalize_mcp, read_environment, register_mcp, remove_profile,
     require_profile,
 )
-from .credentials import CREDENTIAL_NAME, encrypt_api_key
+from .credentials import CREDENTIAL_NAME, decrypt_api_key, encrypt_api_key
 from .control_plane import attach_tunnel, inspect_tunnel, provision_tunnel
 from .systemd import (
     doctor, install_service, instance_name, service_state, start_service, status,
@@ -261,8 +261,11 @@ def run(arguments: Optional[Sequence[str]] = None) -> int:
         paths = require_profile(args.profile); environment = read_environment(paths.env)
         if paths.credential.is_file():
             directory = os.environ.get("CREDENTIALS_DIRECTORY", "")
-            if not directory: raise ConfigError("systemd did not provide CREDENTIALS_DIRECTORY")
-            environment[CREDENTIAL_NAME] = (Path(directory) / CREDENTIAL_NAME).read_text(encoding="utf-8").strip()
+            environment[CREDENTIAL_NAME] = (
+                (Path(directory) / CREDENTIAL_NAME).read_text(encoding="utf-8").strip()
+                if directory
+                else decrypt_api_key(paths.credential)
+            )
         try: executable = [environment.get("TUNNEL_CLIENT_BIN", "tunnel-client"), "run", *shlex.split(environment.get("TUNNEL_CLIENT_ARGS", "")), *shlex.split(environment.get("TUNNEL_CLIENT_MCP_ARGS", ""))]
         except ValueError as exc: raise ConfigError(f"invalid profile arguments: {exc}") from exc
         os.execvpe(executable[0], executable, {**os.environ, **environment}); raise AssertionError("os.execvpe returned")
