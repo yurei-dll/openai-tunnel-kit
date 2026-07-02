@@ -57,5 +57,7 @@ def encrypt_api_key(api_key: str, destination: Path) -> Path:
     if result.returncode:
         detail = result.stderr.strip() or "systemd-creds failed"
         raise ConfigError(f"could not encrypt API key: {detail}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.parent.chmod(0o700)
     write_text_atomic(destination, result.stdout, mode=0o600)
     return destination
