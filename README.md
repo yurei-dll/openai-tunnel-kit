@@ -98,8 +98,10 @@ openai-tunnel-kit setup-env
 
 `setup-env` validates and copies the MCP configuration, creates the profile,
 encrypts the runtime API key with `systemd-creds --user`, installs the systemd
-user unit, and enables and starts it. The key is decrypted by systemd only for
-the running service and is not written to the generated profile `.env`.
+user unit, and enables and starts it. The toolkit's service launcher decrypts
+the host-bound credential with `systemd-creds --user` immediately before
+executing `tunnel-client`; the key is not written to the generated profile
+`.env`.
 
 The recommended `CONTROL_PLANE_API_KEY_FILE` variable points to a file
 containing only the key. It keeps the secret out of the sourceable setup file
@@ -253,12 +255,23 @@ this toolkit manages the same profile and service lifecycle:
 
 `openai-tunnel-kit wizard` guides the complete supported flow:
 
-1. Select a local stdio command or HTTPS MCP Server URL.
-2. Reuse, attach, or provision a control-plane tunnel.
-3. Enter explicit organization/workspace scopes when the backend exposes them.
-4. Encrypt the runtime key and discard the transient admin key.
-5. Install and start the systemd user service.
-6. Read live tunnel metadata back and provide the exact ChatGPT handoff.
+1. Upload a standard `mcp.json` (or enter a target manually).
+2. Enter a transient organization Admin API key and load active projects.
+3. Select a project and create a dedicated service-account runtime key.
+4. Reuse, attach, or provision a control-plane tunnel.
+5. Enter explicit organization/workspace scopes when the backend exposes them.
+6. Encrypt the generated runtime key and discard the transient admin key.
+7. Install and start the systemd user service.
+8. Read live tunnel metadata back and provide the exact ChatGPT handoff.
+
+The automatic clean-slate path therefore needs an `mcp.json`, an Admin API key,
+and an explicit organization or workspace ID for tunnel scope. OpenAI's Admin
+API returns selectable projects but does not include the parent organization ID
+in project objects, so the wizard refuses to guess that boundary. The wizard
+uses the documented project service-account endpoint and retains only the
+returned one-time runtime key as an encrypted systemd credential:
+
+<https://platform.openai.com/docs/api-reference/project-service-accounts>
 
 The wizard deliberately reports an absent `workspace_ids` attachment instead
 of inventing an ID. ChatGPT app creation itself remains a final GUI handoff

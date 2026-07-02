@@ -204,6 +204,9 @@ Provide an easy path without making web dependencies part of the core CLI.
 * Transient admin/runtime inputs with encrypted runtime persistence.
 * Explicit destructive confirmation and profile replacement control.
 * Sanitized result and ChatGPT GUI handoff.
+* `mcp.json` upload and Admin API project discovery.
+* Dedicated project service-account creation with one-time runtime-key capture.
+* Best-effort service-account rollback before tunnel creation succeeds.
 
 ## Non-Goals For Now
 
