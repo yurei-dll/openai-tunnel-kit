@@ -50,6 +50,12 @@ optionally retain one global admin key in the current OS user's system wallet
 profile, generated config, or systemd service. Without that option, the admin
 key remains transient and is discarded after control-plane provisioning.
 
+Each wizard-created tunnel runtime also binds its health/admin server to an
+OS-assigned loopback port (`127.0.0.1:0`) so multiple profiles can run at once.
+The resolved base URL is written to the per-profile file
+`~/.config/openai-tunnel-kit/health/<profile>.url`. Explicit health arguments
+already present on an existing profile are preserved.
+
 If `python3 -m venv` is unavailable, install your distribution's venv package
 first (commonly `python3-venv` on Debian-family systems). On Python
 installations that are not externally managed, a normal virtual environment or

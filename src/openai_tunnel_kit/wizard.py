@@ -74,6 +74,21 @@ def _mcp_content(payload: dict[str, Any]) -> dict[str, Any]:
     return {"mcpServers": {str(payload.get("profile") or "mcp-server"): _target_config(payload)}}
 
 
+def _wizard_tunnel_arguments(
+    existing_environment: dict[str, str], health_url_file: Path,
+) -> tuple[str, ...]:
+    """Preserve explicit run flags and add collision-safe health defaults."""
+    try:
+        arguments = shlex.split(existing_environment.get("TUNNEL_CLIENT_ARGS", ""))
+    except ValueError as exc:
+        raise ConfigError(f"invalid existing TUNNEL_CLIENT_ARGS: {exc}") from exc
+    if not any(argument == "--health.listen-addr" or argument.startswith("--health.listen-addr=") for argument in arguments):
+        arguments.extend(("--health.listen-addr", "127.0.0.1:0"))
+    if not any(argument == "--health.url-file" or argument.startswith("--health.url-file=") for argument in arguments):
+        arguments.extend(("--health.url-file", str(health_url_file)))
+    return tuple(arguments)
+
+
 def run_setup(payload: dict[str, Any]) -> dict[str, Any]:
     """Apply one confirmed wizard setup without retaining submitted secrets."""
     if payload.get("confirm") is not True:
@@ -92,6 +107,7 @@ def run_setup(payload: dict[str, Any]) -> dict[str, Any]:
     existing_paths = profile_paths(profile)
     profile_preexisting = existing_paths.env.exists()
     existing_environment = read_environment(existing_paths.env) if profile_preexisting else {}
+    tunnel_arguments = _wizard_tunnel_arguments(existing_environment, existing_paths.health_url)
     if profile_preexisting and not payload.get("replace_profile"):
         incomplete = (
             not existing_environment.get("CONTROL_PLANE_TUNNEL_ID")
@@ -160,9 +176,12 @@ def run_setup(payload: dict[str, Any]) -> dict[str, Any]:
             admin_file.write_text(admin_key + "\n", encoding="utf-8")
             admin_file.chmod(0o600)
 
+        existing_paths.health_url.parent.mkdir(parents=True, exist_ok=True)
+        existing_paths.health_url.parent.chmod(0o700)
         paths = initialize_profile(
             profile,
             binary=str(payload.get("tunnel_client_bin") or "tunnel-client"),
+            arguments=tunnel_arguments,
             mcp_source=mcp_file,
             force=bool(payload.get("replace_profile")),
             tunnel_id=tunnel_id,
@@ -214,6 +233,7 @@ def run_setup(payload: dict[str, Any]) -> dict[str, Any]:
         initialize_profile(
             profile,
             binary=str(payload.get("tunnel_client_bin") or "tunnel-client"),
+            arguments=tunnel_arguments,
             mcp_source=mcp_file,
             force=True,
             tunnel_id=tunnel_id,

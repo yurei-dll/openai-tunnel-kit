@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from openai_tunnel_kit.config import ConfigError, read_environment, set_tunnel_id
 from openai_tunnel_kit.wizard import (
-    _admin_key_for_payload, _html, _target_config, run_setup,
+    _admin_key_for_payload, _html, _target_config, _wizard_tunnel_arguments, run_setup,
     run_setup_with_admin_credential,
 )
 from openai_tunnel_kit.platform_admin import ServiceAccountCredential
@@ -42,6 +42,31 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(
             _target_config({"target_mode": "url", "mcp_url": "https://example.com/mcp"}),
             {"url": "https://example.com/mcp"},
+        )
+
+    def test_wizard_adds_per_profile_ephemeral_health_endpoint(self):
+        health_file = self.root / "health" / "demo.url"
+        self.assertEqual(
+            _wizard_tunnel_arguments({}, health_file),
+            (
+                "--health.listen-addr", "127.0.0.1:0",
+                "--health.url-file", str(health_file),
+            ),
+        )
+
+    def test_wizard_preserves_explicit_health_arguments(self):
+        existing = {
+            "TUNNEL_CLIENT_ARGS": (
+                '"--health.listen-addr" "127.0.0.1:9090" '
+                '"--health.url-file=/tmp/custom-health.url"'
+            )
+        }
+        self.assertEqual(
+            _wizard_tunnel_arguments(existing, self.root / "health" / "demo.url"),
+            (
+                "--health.listen-addr", "127.0.0.1:9090",
+                "--health.url-file=/tmp/custom-health.url",
+            ),
         )
 
     def test_setup_requires_confirmation(self):
@@ -129,6 +154,8 @@ class WizardTests(unittest.TestCase):
         profile = read_environment(self.root / "profiles" / "demo.env")
         self.assertNotIn("sk-runtime", (self.root / "profiles" / "demo.env").read_text())
         self.assertEqual(profile["CONTROL_PLANE_TUNNEL_ID"], "tunnel_demo")
+        self.assertIn("127.0.0.1:0", profile["TUNNEL_CLIENT_ARGS"])
+        self.assertIn("demo.url", profile["TUNNEL_CLIENT_ARGS"])
         self.assertFalse(result["workspace_attached"])
         encrypt.assert_called_once_with("sk-runtime", self.root / "credentials" / "demo.api-key.cred")
         install.assert_called_once_with("demo", start=True)

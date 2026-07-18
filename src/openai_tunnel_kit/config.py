@@ -80,6 +80,10 @@ class ProfilePaths:
     def credential(self) -> Path:
         return self.root / "credentials" / f"{self.name}.api-key.cred"
 
+    @property
+    def health_url(self) -> Path:
+        return self.root / "health" / f"{self.name}.url"
+
 
 def profile_paths(profile: str, root: Optional[Path] = None) -> ProfilePaths:
     return ProfilePaths(validate_profile_name(profile), root or config_dir())
