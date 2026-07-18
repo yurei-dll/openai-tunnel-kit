@@ -34,6 +34,28 @@ source .venv/bin/activate
 openai-tunnel-kit --help
 ```
 
+Install the optional browser wizard dependencies when you want the guided path:
+
+```console
+./.venv/bin/python -m pip install -e '.[wizard]'
+./.venv/bin/openai-tunnel-kit wizard
+```
+
+The wizard listens only on `127.0.0.1`, chooses an unused port by default, and
+opens a local browser. Use `--no-browser` on headless machines. Submitted API
+keys remain in process memory and mode-`0600` temporary files. The runtime key
+is retained per profile, encrypted through `systemd-creds`. The wizard can
+optionally retain one global admin key in the current OS user's system wallet
+(GNOME Keyring/Secret Service or KWallet); it is never copied into a kit
+profile, generated config, or systemd service. Without that option, the admin
+key remains transient and is discarded after control-plane provisioning.
+
+Each wizard-created tunnel runtime also binds its health/admin server to an
+OS-assigned loopback port (`127.0.0.1:0`) so multiple profiles can run at once.
+The resolved base URL is written to the per-profile file
+`~/.config/openai-tunnel-kit/health/<profile>.url`. Explicit health arguments
+already present on an existing profile are preserved.
+
 If `python3 -m venv` is unavailable, install your distribution's venv package
 first (commonly `python3-venv` on Debian-family systems). On Python
 installations that are not externally managed, a normal virtual environment or
@@ -85,8 +107,10 @@ openai-tunnel-kit setup-env
 
 `setup-env` validates and copies the MCP configuration, creates the profile,
 encrypts the runtime API key with `systemd-creds --user`, installs the systemd
-user unit, and enables and starts it. The key is decrypted by systemd only for
-the running service and is not written to the generated profile `.env`.
+user unit, and enables and starts it. The toolkit's service launcher decrypts
+the host-bound credential with `systemd-creds --user` immediately before
+executing `tunnel-client`; the key is not written to the generated profile
+`.env`.
 
 The recommended `CONTROL_PLANE_API_KEY_FILE` variable points to a file
 containing only the key. It keeps the secret out of the sourceable setup file
@@ -94,6 +118,21 @@ and shell history; the source file still contains every value needed to locate
 and install the setup. `CONTROL_PLANE_API_KEY` is accepted as an alternative
 for secrets supplied transiently by a password manager or provisioning system.
 Do not commit either the key file or a setup file containing a literal key.
+
+`setup-env` can provision the tunnel before installing the service. Omit
+`CONTROL_PLANE_TUNNEL_ID` and provide explicit scope plus a transient admin-key
+file:
+
+```console
+export OPENAI_TUNNEL_ADMIN_KEY_FILE="$HOME/.config/openai/admin-api-key"
+export OPENAI_TUNNEL_NAME="PAT Tunnel Desktop"
+export OPENAI_TUNNEL_DESCRIPTION="Personal Access Tool tunnel for desktop"
+export OPENAI_TUNNEL_ORGANIZATION_IDS="org_..."
+export OPENAI_TUNNEL_WORKSPACE_IDS="ws_..."
+```
+
+Comma-separate multiple IDs. The admin key is used only for tunnel creation and
+is not copied into generated files. The runtime key is encrypted as before.
 
 This flow requires a systemd release with user-scoped encrypted credentials
 (`systemd-creds encrypt --user`). Encryption is tied to the local user/host, so
@@ -172,10 +211,110 @@ openai-tunnel-kit service start|stop|status <profile>
 openai-tunnel-kit service uninstall <profile> [--purge]
 openai-tunnel-kit mcp add <profile> <file>
 openai-tunnel-kit mcp list|print <profile>
+openai-tunnel-kit tunnel inspect <profile>
+openai-tunnel-kit tunnel attach <profile> [scope options]
+openai-tunnel-kit tunnel provision <profile> [scope options]
+openai-tunnel-kit wizard [--port PORT] [--no-browser]
 openai-tunnel-kit setup-env [--force]
 openai-tunnel-kit doctor [profile]
 openai-tunnel-kit explain <profile>
 ```
+
+### Tunnel control-plane lifecycle
+
+The toolkit can inspect, create, and attach OpenAI control-plane tunnels without
+storing an admin key in the profile or systemd service. Runtime polling still
+uses the narrower runtime API key.
+
+```console
+openai-tunnel-kit tunnel inspect personal-access-tool
+
+openai-tunnel-kit tunnel attach personal-access-tool \
+  --admin-key-file ~/.config/openai/admin-api-key \
+  --organization-id org_... \
+  --workspace-id ws_...
+
+openai-tunnel-kit tunnel provision personal-access-tool \
+  --admin-key-file ~/.config/openai/admin-api-key \
+  --name "PAT Tunnel Desktop" \
+  --description "Personal Access Tool tunnel for desktop" \
+  --organization-id org_... \
+  --workspace-id ws_...
+```
+
+IDs are never guessed. Mutating commands read the tunnel metadata back and fail
+if the requested scope was not retained. `inspect` can use the runtime key;
+`attach` and `provision` require a real admin key supplied through a file.
+
+Remote OAuth-capable MCP servers use the existing standard `url` entry. The
+external `tunnel-client` handles OAuth and protected-resource discovery while
+this toolkit manages the same profile and service lifecycle:
+
+```json
+{
+  "mcpServers": {
+    "private-http-server": {
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}
+```
+
+### Browser wizard
+
+`openai-tunnel-kit wizard` guides the complete supported flow:
+
+1. Upload a standard `mcp.json` (or enter a target manually).
+2. Use the global admin key saved in the OS user's system wallet, or enter an
+   organization Admin API key and optionally save it there, then load active
+   projects.
+3. Select a project and create a dedicated service-account runtime key.
+4. Reuse, attach, or provision a control-plane tunnel.
+5. Enter explicit organization/workspace scopes when the backend exposes them.
+6. Encrypt the generated runtime key and discard the transient admin key.
+7. Install and start the systemd user service.
+8. Read live tunnel metadata back and provide the exact ChatGPT handoff.
+
+New service accounts default to `openai-tunnel-kit-<profile>` so their owning
+kit profile is visible in OpenAI's project administration UI. The wizard also
+accepts an explicit service-account name when a different lifecycle is
+intentional.
+
+Replacing an existing profile reuses its encrypted runtime credential by
+default instead of creating a duplicate service account. **Rotate automatic
+runtime credential** explicitly creates a replacement key; after the new setup
+passes verification, revoke the previous service account in OpenAI's project
+administration UI. New profiles still create one dedicated service account.
+
+The tunnel name defaults to the profile name. After a successful setup, the
+wizard remembers the first organization ID in the user-global plaintext file
+`~/.config/openai-tunnel-kit/wizard-preferences.json` and pre-fills it on the
+next wizard run. Organization IDs are identifiers rather than credentials; the
+file is nevertheless written with mode `0600` to avoid unnecessary disclosure.
+
+The saved admin credential is global to the logged-in OS user and reusable by
+every wizard run; it is deliberately not associated with any tunnel-kit
+profile or selected project. The browser never receives a saved key. Project
+loading and setup ask the local Python backend to read it directly from the
+wallet, and **Forget saved key** removes the global wallet entry. An entered
+replacement is saved only after OpenAI accepts it during project loading or a
+pre-setup project validation. Desktop wallet policy controls whether retrieval
+prompts for the user's password or reuses the wallet unlocked at login.
+
+The automatic clean-slate path therefore needs an `mcp.json`, an Admin API key,
+and an explicit organization or workspace ID for tunnel scope. OpenAI's Admin
+API returns selectable projects but does not include the parent organization ID
+in project objects, so the wizard refuses to guess that boundary. The wizard
+uses the documented project service-account endpoint and retains only the
+returned one-time runtime key as an encrypted systemd credential:
+
+<https://platform.openai.com/docs/api-reference/project-service-accounts>
+
+The wizard deliberately reports an absent `workspace_ids` attachment instead
+of inventing an ID. ChatGPT app creation itself remains a final GUI handoff
+because OpenAI does not expose a stable public app-creation API. For the Server
+URL workaround, the wizard accepts an OAuth-capable HTTPS MCP endpoint and lets
+`tunnel-client` perform its standard OAuth/protected-resource discovery.
 
 The top-level help points out the usual happy path:
 `profile init` → `service install` → `doctor`. Use `explain <profile>` when you

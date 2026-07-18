@@ -180,6 +180,34 @@ openai-tunnel-kit profile export <profile>
 openai-tunnel-kit profile import <file>
 ```
 
+## Milestone 9: Control-Plane Lifecycle
+
+Manage the API-side tunnel lifecycle without conflating runtime and admin
+credentials. **Implemented on `dev-oauth`.**
+
+* Inspect live tunnel metadata with the profile runtime key.
+* Create and attach tunnels only with explicit organization/workspace IDs.
+* Verify requested scopes by reading metadata back after mutation.
+* Keep the admin key transient and out of profiles and systemd units.
+* Allow `setup-env` to provision a tunnel before installing the runtime.
+* Preserve both stdio and remote OAuth-capable MCP target configurations.
+
+## Milestone 10: Optional Browser Wizard
+
+Provide an easy path without making web dependencies part of the core CLI.
+**Implemented on `dev-oauth`.**
+
+* Loopback-only FastAPI/uvicorn setup UI.
+* Random per-process API token plus strict browser security headers.
+* Local stdio and remote OAuth-capable URL targets.
+* Existing, attach, and provision tunnel workflows.
+* Transient admin/runtime inputs with encrypted runtime persistence.
+* Explicit destructive confirmation and profile replacement control.
+* Sanitized result and ChatGPT GUI handoff.
+* `mcp.json` upload and Admin API project discovery.
+* Dedicated project service-account creation with one-time runtime-key capture.
+* Best-effort service-account rollback before tunnel creation succeeds.
+
 ## Non-Goals For Now
 
 * Do not become a general process manager.

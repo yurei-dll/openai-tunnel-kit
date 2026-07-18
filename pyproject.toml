@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openai-tunnel-kit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Portable profile and systemd tooling for tunnel-client and MCP setups"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -12,6 +12,14 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "Yūrei.dll"}]
 dependencies = []
+
+[project.optional-dependencies]
+wizard = [
+  "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
+  "keyring>=25,<26",
+  "uvicorn>=0.34,<1",
+]
 
 [project.scripts]
 openai-tunnel-kit = "openai_tunnel_kit.cli:main"

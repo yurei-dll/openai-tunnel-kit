@@ -6,11 +6,19 @@ from pathlib import Path
 from unittest.mock import call, patch
 
 from openai_tunnel_kit.config import initialize_profile
-from openai_tunnel_kit.systemd import credential_problem, inspect_service, install_service
+from openai_tunnel_kit.systemd import credential_problem, inspect_service, install_service, wait_for_service, ServiceState
 from openai_tunnel_kit.templates import render_desktop_environment_drop_in, render_systemd_unit
 
 
 class SystemdTests(unittest.TestCase):
+    @patch("openai_tunnel_kit.systemd.time.sleep")
+    @patch("openai_tunnel_kit.systemd.time.monotonic", side_effect=[100, 100, 100, 101, 101, 102.1, 102.1])
+    @patch("openai_tunnel_kit.systemd.inspect_service", return_value=ServiceState(True, True, "active", "running"))
+    def test_wait_requires_stable_running_window(self, inspect, _clock, _sleep):
+        state = wait_for_service("demo", timeout=10, stable_for=2)
+        self.assertTrue(state.running)
+        self.assertGreaterEqual(inspect.call_count, 3)
+
     @patch("openai_tunnel_kit.systemd.shutil.which", return_value="/usr/bin/systemctl")
     @patch("openai_tunnel_kit.systemd.subprocess.run")
     def test_auto_restart_is_not_reported_as_running(self, run, _which):
@@ -78,11 +86,7 @@ class SystemdTests(unittest.TestCase):
             Path("/opt/bin/openai-tunnel-kit"),
             encrypted_credentials=True,
         )
-        self.assertIn(
-            "LoadCredentialEncrypted=CONTROL_PLANE_API_KEY:/home/example/.config/"
-            "openai-tunnel-kit/credentials/%i.api-key.cred",
-            unit,
-        )
+        self.assertNotIn("LoadCredentialEncrypted", unit)
         self.assertIn("ExecStart=/opt/bin/openai-tunnel-kit _run-service %i", unit)
 
     @patch("openai_tunnel_kit.systemd.write_text_atomic")

@@ -55,8 +55,10 @@ def render_systemd_unit(
 ) -> str:
     environment_file = config_dir / "profiles" / "%i.env"
     if launcher and encrypted_credentials:
-        credential = config_dir / "credentials" / "%i.api-key.cred"
-        credential_line = f"LoadCredentialEncrypted=CONTROL_PLANE_API_KEY:{credential}\n"
+        # User managers can reject LoadCredentialEncrypted even when
+        # `systemd-creds decrypt --user` succeeds in the login session. Let the
+        # launcher decrypt the host-bound file directly instead.
+        credential_line = ""
         exec_start = f"{launcher} _run-service %i"
     else:
         credential_line = ""

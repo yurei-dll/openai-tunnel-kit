@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
@@ -207,6 +208,29 @@ def inspect_service(profile: str) -> ServiceState:
 def service_state(profile: str) -> tuple[bool, bool]:
     state = inspect_service(profile)
     return state.enabled, state.running
+
+
+def wait_for_service(profile: str, timeout: float = 12.0, stable_for: float = 2.0) -> ServiceState:
+    """Require the unit to remain active/running, not merely pass through it."""
+    deadline = time.monotonic() + timeout
+    stable_since: Optional[float] = None
+    latest = ServiceState(False, False)
+    while time.monotonic() < deadline:
+        latest = inspect_service(profile)
+        now = time.monotonic()
+        if latest.running:
+            stable_since = stable_since or now
+            if now - stable_since >= stable_for:
+                return latest
+        else:
+            stable_since = None
+        time.sleep(0.2)
+    raise ConfigError(
+        f"service {instance_name(profile)} did not remain running for {stable_for:g}s "
+        f"within {timeout:g}s ({latest.detail}); run "
+        f"'openai-tunnel-kit service status {profile}' and "
+        f"'journalctl --user -u {instance_name(profile)}'"
+    )
 
 
 def uninstall_service(profile: str) -> None:
