@@ -5,7 +5,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from openai_tunnel_kit.config import ConfigError, read_environment, set_tunnel_id
-from openai_tunnel_kit.wizard import _html, _target_config, run_setup
+from openai_tunnel_kit.wizard import (
+    _admin_key_for_payload, _html, _target_config, run_setup,
+    run_setup_with_admin_credential,
+)
 from openai_tunnel_kit.platform_admin import ServiceAccountCredential
 
 
@@ -52,6 +55,47 @@ class WizardTests(unittest.TestCase):
         self.assertIn('.req{color:#ff5c5c', html)
         self.assertIn('Profile name <span class="req"', html)
         self.assertIn('At least one organization or workspace ID is required', html)
+        self.assertIn('Save entered key globally in system wallet', html)
+        self.assertIn('Forget saved key', html)
+
+    @patch("openai_tunnel_kit.wizard.load_admin_key", return_value="sk-saved-admin")
+    def test_saved_admin_key_is_global_and_resolved_in_backend(self, load_key):
+        key, should_save = _admin_key_for_payload({"use_saved_admin_key": True})
+        self.assertEqual(key, "sk-saved-admin")
+        self.assertFalse(should_save)
+        load_key.assert_called_once_with()
+
+    @patch("openai_tunnel_kit.wizard.load_admin_key")
+    def test_entered_admin_key_overrides_saved_key(self, load_key):
+        key, should_save = _admin_key_for_payload({
+            "admin_api_key": "sk-new-admin",
+            "use_saved_admin_key": True,
+            "save_admin_key": True,
+        })
+        self.assertEqual(key, "sk-new-admin")
+        self.assertTrue(should_save)
+        load_key.assert_not_called()
+
+    @patch("openai_tunnel_kit.wizard.save_admin_key")
+    @patch("openai_tunnel_kit.wizard.list_projects", return_value=[])
+    @patch("openai_tunnel_kit.wizard.run_setup", return_value={"ok": True})
+    def test_setup_validates_and_saves_admin_key_before_mutation(self, setup, projects, save_key):
+        payload = {"admin_api_key": "sk-new-admin", "save_admin_key": True}
+        self.assertEqual(run_setup_with_admin_credential(payload), {"ok": True})
+        projects.assert_called_once_with("sk-new-admin")
+        setup.assert_called_once()
+        save_key.assert_called_once_with("sk-new-admin")
+
+    @patch("openai_tunnel_kit.wizard.save_admin_key")
+    @patch("openai_tunnel_kit.wizard.list_projects", side_effect=ConfigError("invalid key"))
+    @patch("openai_tunnel_kit.wizard.run_setup")
+    def test_invalid_admin_key_is_not_saved_or_used_for_setup(self, setup, _projects, save_key):
+        with self.assertRaisesRegex(ConfigError, "invalid key"):
+            run_setup_with_admin_credential({
+                "admin_api_key": "sk-invalid", "save_admin_key": True,
+            })
+        save_key.assert_not_called()
+        setup.assert_not_called()
 
     @patch("openai_tunnel_kit.wizard.create_service_account")
     def test_missing_tunnel_scope_fails_before_external_mutation(self, create_account):
@@ -115,6 +159,8 @@ class WizardTests(unittest.TestCase):
         result = run_setup(payload)
         self.assertTrue(result["workspace_attached"])
         self.assertIn("select this tunnel", result["next"])
+        create_account.assert_called_once_with("sk-admin", "proj_1", "openai-tunnel-kit-demo")
+        self.assertEqual(provision.call_args.args[2], "demo")
         self.assertNotIn("sk-admin", (self.root / "profiles" / "demo.env").read_text())
         self.assertNotIn("sk-generated", (self.root / "profiles" / "demo.env").read_text())
 

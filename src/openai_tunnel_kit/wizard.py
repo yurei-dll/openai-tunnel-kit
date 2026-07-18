@@ -18,6 +18,8 @@ from .config import (
 )
 from .control_plane import attach_tunnel, inspect_tunnel, provision_tunnel
 from .credentials import encrypt_api_key
+from .admin_credentials import forget_admin_key, load_admin_key, save_admin_key
+from .wizard_preferences import load_preferences, save_last_organization_id
 from .systemd import install_service, wait_for_service
 from .platform_admin import create_service_account, delete_service_account, list_projects
 
@@ -215,6 +217,39 @@ def run_setup(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _admin_key_for_payload(payload: dict[str, Any]) -> tuple[str, bool]:
+    """Resolve a transient browser value or the global user-wallet credential."""
+    submitted = str(payload.get("admin_api_key") or "").strip()
+    should_save = bool(payload.get("save_admin_key"))
+    if submitted:
+        return submitted, should_save
+    if payload.get("use_saved_admin_key"):
+        if should_save:
+            raise ConfigError("enter a new admin key before choosing to save it")
+        return load_admin_key(), False
+    return "", False
+
+
+def run_setup_with_admin_credential(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the wallet credential locally without returning it to the browser."""
+    admin_key, should_save = _admin_key_for_payload(payload)
+    if should_save:
+        # Validate before storing, and store before setup mutates local or remote
+        # state so a wallet failure cannot make a successful setup look failed.
+        list_projects(admin_key)
+        save_admin_key(admin_key)
+    resolved = dict(payload)
+    resolved["admin_api_key"] = admin_key
+    result = run_setup(resolved)
+    organizations = _identifiers(str(payload.get("organization_ids") or ""))
+    if organizations:
+        try:
+            save_last_organization_id(organizations[0])
+        except (ConfigError, OSError) as exc:
+            result["preference_warning"] = f"setup succeeded but the organization preference was not saved: {exc}"
+    return result
+
+
 def create_app(token: Optional[str] = None) -> Any:
     FastAPI, Header, HTTPException, HTMLResponse, _uvicorn = _dependencies()
     app = FastAPI(title="openai-tunnel-kit wizard", docs_url=None, redoc_url=None)
@@ -242,7 +277,7 @@ def create_app(token: Optional[str] = None) -> Any:
         if not secrets.compare_digest(x_wizard_token, wizard_token):
             raise HTTPException(status_code=403, detail="invalid wizard token")
         try:
-            return await threading_to_async(run_setup, payload)
+            return await threading_to_async(run_setup_with_admin_credential, payload)
         except ConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -251,8 +286,30 @@ def create_app(token: Optional[str] = None) -> Any:
         if not secrets.compare_digest(x_wizard_token, wizard_token):
             raise HTTPException(status_code=403, detail="invalid wizard token")
         try:
-            projects = await threading_to_async(list_projects, str(payload.get("admin_api_key") or ""))
-            return {"projects": projects}
+            admin_key, should_save = await threading_to_async(_admin_key_for_payload, payload)
+            projects = await threading_to_async(list_projects, admin_key)
+            if should_save:
+                await threading_to_async(save_admin_key, admin_key)
+            return {"projects": projects, "admin_key_saved": should_save}
+        except ConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/admin-credential/forget")
+    async def forget_credential(x_wizard_token: str = Header(default="")) -> dict[str, Any]:
+        if not secrets.compare_digest(x_wizard_token, wizard_token):
+            raise HTTPException(status_code=403, detail="invalid wizard token")
+        try:
+            removed = await threading_to_async(forget_admin_key)
+            return {"removed": removed}
+        except ConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/preferences")
+    async def preferences(x_wizard_token: str = Header(default="")) -> dict[str, str]:
+        if not secrets.compare_digest(x_wizard_token, wizard_token):
+            raise HTTPException(status_code=403, detail="invalid wizard token")
+        try:
+            return await threading_to_async(load_preferences)
         except ConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -299,7 +356,7 @@ label{display:block;margin:9px 0 4px;color:#ccc}input,select,textarea{box-sizing
 input[type=checkbox]{width:auto}button{padding:11px 18px;border:0;border-radius:7px;background:#eee;color:#111;font-weight:700;cursor:pointer}
 pre{white-space:pre-wrap;background:#0d0d0d;border:1px solid #333;border-radius:8px;padding:14px;min-height:50px}.warn{color:#ffbd66}.secret{font-family:monospace}.req{color:#ff5c5c;font-weight:800}.hint{color:#999;font-size:13px}
 @media(max-width:650px){.grid{grid-template-columns:1fr}}
-</style></head><body><h1>openai-tunnel-kit wizard</h1><p class="sub">Local setup UI. Secrets remain in memory and transient mode-0600 files.</p>
+</style></head><body><h1>openai-tunnel-kit wizard</h1><p class="sub">Local setup UI. Runtime secrets use encrypted credentials; the optional admin credential is stored globally in your system wallet.</p>
 <form id="setup"><fieldset><legend>1. MCP configuration</legend><div class="grid">
 <div><label>Profile name <span class="req" title="Required">*</span></label><input name="profile" required value="personal-access-tool"></div>
 <div><label>tunnel-client binary</label><input name="tunnel_client_bin" value="tunnel-client"></div>
@@ -309,10 +366,11 @@ pre{white-space:pre-wrap;background:#0d0d0d;border:1px solid #333;border-radius:
 <div style="grid-column:1/-1"><label>MCP server URL <span class="req" title="Required for Server URL mode without mcp.json">*</span></label><input name="mcp_url" placeholder="https://mcp.example.com/mcp"></div></div></fieldset>
 <fieldset><legend>2. Administrative provisioning</legend><div class="grid">
 <div><label>Credential mode</label><select name="credential_mode"><option value="automatic">Create dedicated service account</option><option value="existing">Use existing runtime key</option></select></div>
-<div><label>Admin API key <span class="req" title="Required for automatic credentials and tunnel mutations">*</span></label><input class="secret" name="admin_api_key" type="password" autocomplete="off"></div>
+<div><label>Admin API key <span class="req" title="Required for automatic credentials and tunnel mutations">*</span></label><input class="secret" name="admin_api_key" type="password" autocomplete="off"><span class="hint">A value entered here overrides the saved global credential.</span></div>
+<div><label>System wallet</label><p><label><input type="checkbox" name="use_saved_admin_key" checked> Use saved admin key</label></p><p><label><input type="checkbox" name="save_admin_key"> Save entered key globally in system wallet</label></p><button type="button" id="forget-admin-key">Forget saved key</button></div>
 <div><label>Project <span class="req" title="Required for automatic credentials">*</span></label><select name="project_id"><option value="">Load projects with admin key</option></select></div>
 <div><label>&nbsp;</label><button type="button" id="load-projects">Load projects</button></div>
-<div><label>Service-account name</label><input name="service_account_name" value="openai-tunnel-kit-runtime"></div>
+<div><label>Service-account name</label><input name="service_account_name" placeholder="Defaults to openai-tunnel-kit-&lt;profile&gt;"><span class="hint">Leave blank to include the profile identity automatically.</span></div>
 <div><label>Existing runtime key (manual mode only) <span class="req" title="Required in existing credential mode">*</span></label><input class="secret" name="runtime_api_key" type="password" autocomplete="off"></div></div></fieldset>
 <fieldset><legend>3. Tunnel control plane</legend><div class="grid">
 <div><label>Mode</label><select name="tunnel_mode"><option value="provision">Create a tunnel</option><option value="existing">Use existing tunnel</option><option value="attach">Attach existing tunnel scopes</option></select></div>
@@ -320,7 +378,7 @@ pre{white-space:pre-wrap;background:#0d0d0d;border:1px solid #333;border-radius:
 <div><label>Organization IDs (comma-separated) <span class="req" title="An organization or workspace ID is required">*</span></label><input name="organization_ids" placeholder="org_..."></div>
 <div><label>Workspace IDs (comma-separated; never guess) <span class="req" title="An organization or workspace ID is required">*</span></label><input name="workspace_ids" placeholder="ws_..."></div>
 <div style="grid-column:1/-1" class="hint"><span class="req">*</span> At least one organization or workspace ID is required when creating or attaching a tunnel.</div>
-<div><label>Tunnel name <span class="req" title="Required when creating a tunnel">*</span></label><input name="tunnel_name" value="Personal MCP tunnel"></div>
+<div><label>Tunnel name <span class="req" title="Required when creating a tunnel">*</span></label><input name="tunnel_name" placeholder="Defaults to the profile name"><span class="hint">Leave blank to match the profile name automatically.</span></div>
 <div><label>Description <span class="req" title="Required when creating a tunnel">*</span></label><input name="tunnel_description" value="Managed by openai-tunnel-kit"></div></div></fieldset>
 <fieldset><legend>4. Installation</legend>
 <p><label><input type="checkbox" name="pass_desktop_environment"> Pass desktop environment</label></p>
@@ -329,7 +387,10 @@ pre{white-space:pre-wrap;background:#0d0d0d;border:1px solid #333;border-radius:
 <p class="warn"><label><input type="checkbox" name="confirm" required> I confirm this may create or update tunnel metadata and local service configuration. <span class="req" title="Required">*</span></label></p></fieldset>
 <button type="submit">Configure and verify</button></form><h2>Result</h2><pre id="result">Ready.</pre>
 <script>const token=""" + escaped_token + """;const form=document.querySelector('#setup'),out=document.querySelector('#result');
-document.querySelector('#load-projects').addEventListener('click',async()=>{out.textContent='Loading projects…';const r=await fetch('/api/projects',{method:'POST',headers:{'content-type':'application/json','x-wizard-token':token},body:JSON.stringify({admin_api_key:form.elements.admin_api_key.value})});const body=await r.json();if(!r.ok){out.textContent=JSON.stringify(body,null,2);return}const select=form.elements.project_id;select.innerHTML='';for(const p of body.projects){const o=document.createElement('option');o.value=p.id;o.textContent=`${p.name} (${p.id})`;select.appendChild(o)}out.textContent=`Loaded ${body.projects.length} active project(s).`});
+const adminCredentialData=()=>({admin_api_key:form.elements.admin_api_key.value,use_saved_admin_key:form.elements.use_saved_admin_key.checked,save_admin_key:form.elements.save_admin_key.checked});
+fetch('/api/preferences',{headers:{'x-wizard-token':token}}).then(async r=>{const body=await r.json();if(r.ok&&body.last_organization_id&&!form.elements.organization_ids.value)form.elements.organization_ids.value=body.last_organization_id});
+document.querySelector('#load-projects').addEventListener('click',async()=>{out.textContent='Loading projects…';const r=await fetch('/api/projects',{method:'POST',headers:{'content-type':'application/json','x-wizard-token':token},body:JSON.stringify(adminCredentialData())});const body=await r.json();if(!r.ok){out.textContent=JSON.stringify(body,null,2);return}const select=form.elements.project_id;select.innerHTML='';for(const p of body.projects){const o=document.createElement('option');o.value=p.id;o.textContent=`${p.name} (${p.id})`;select.appendChild(o)}if(body.admin_key_saved){form.elements.admin_api_key.value='';form.elements.save_admin_key.checked=false;form.elements.use_saved_admin_key.checked=true}out.textContent=`Loaded ${body.projects.length} active project(s).${body.admin_key_saved?' Admin key saved in the system wallet.':''}`});
+document.querySelector('#forget-admin-key').addEventListener('click',async()=>{out.textContent='Removing saved admin key…';const r=await fetch('/api/admin-credential/forget',{method:'POST',headers:{'x-wizard-token':token}});const body=await r.json();if(!r.ok){out.textContent=JSON.stringify(body,null,2);return}form.elements.use_saved_admin_key.checked=false;out.textContent=body.removed?'Removed the saved global admin key.':'No saved admin key was present.'});
 form.addEventListener('submit',async e=>{e.preventDefault();out.textContent='Working…';const data={};for(const [k,v] of new FormData(form))if(k!=='mcp_file')data[k]=v;const file=form.elements.mcp_file.files[0];if(file)data.mcp_json=await file.text();
-for(const k of ['confirm','replace_profile','install_service','pass_desktop_environment'])data[k]=form.elements[k].checked;
+for(const k of ['confirm','replace_profile','install_service','pass_desktop_environment','use_saved_admin_key','save_admin_key'])data[k]=form.elements[k].checked;
 try{const r=await fetch('/api/setup',{method:'POST',headers:{'content-type':'application/json','x-wizard-token':token},body:JSON.stringify(data)});const body=await r.json();out.textContent=JSON.stringify(body,null,2)}catch(err){out.textContent=String(err)}});</script></body></html>"""

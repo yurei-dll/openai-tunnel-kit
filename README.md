@@ -43,9 +43,12 @@ Install the optional browser wizard dependencies when you want the guided path:
 
 The wizard listens only on `127.0.0.1`, chooses an unused port by default, and
 opens a local browser. Use `--no-browser` on headless machines. Submitted API
-keys remain in process memory and mode-`0600` temporary files; only the runtime
-key is retained, encrypted through `systemd-creds`. The admin key is discarded
-after control-plane provisioning.
+keys remain in process memory and mode-`0600` temporary files. The runtime key
+is retained per profile, encrypted through `systemd-creds`. The wizard can
+optionally retain one global admin key in the current OS user's system wallet
+(GNOME Keyring/Secret Service or KWallet); it is never copied into a kit
+profile, generated config, or systemd service. Without that option, the admin
+key remains transient and is discarded after control-plane provisioning.
 
 If `python3 -m venv` is unavailable, install your distribution's venv package
 first (commonly `python3-venv` on Debian-family systems). On Python
@@ -256,13 +259,35 @@ this toolkit manages the same profile and service lifecycle:
 `openai-tunnel-kit wizard` guides the complete supported flow:
 
 1. Upload a standard `mcp.json` (or enter a target manually).
-2. Enter a transient organization Admin API key and load active projects.
+2. Use the global admin key saved in the OS user's system wallet, or enter an
+   organization Admin API key and optionally save it there, then load active
+   projects.
 3. Select a project and create a dedicated service-account runtime key.
 4. Reuse, attach, or provision a control-plane tunnel.
 5. Enter explicit organization/workspace scopes when the backend exposes them.
 6. Encrypt the generated runtime key and discard the transient admin key.
 7. Install and start the systemd user service.
 8. Read live tunnel metadata back and provide the exact ChatGPT handoff.
+
+New service accounts default to `openai-tunnel-kit-<profile>` so their owning
+kit profile is visible in OpenAI's project administration UI. The wizard also
+accepts an explicit service-account name when a different lifecycle is
+intentional.
+
+The tunnel name defaults to the profile name. After a successful setup, the
+wizard remembers the first organization ID in the user-global plaintext file
+`~/.config/openai-tunnel-kit/wizard-preferences.json` and pre-fills it on the
+next wizard run. Organization IDs are identifiers rather than credentials; the
+file is nevertheless written with mode `0600` to avoid unnecessary disclosure.
+
+The saved admin credential is global to the logged-in OS user and reusable by
+every wizard run; it is deliberately not associated with any tunnel-kit
+profile or selected project. The browser never receives a saved key. Project
+loading and setup ask the local Python backend to read it directly from the
+wallet, and **Forget saved key** removes the global wallet entry. An entered
+replacement is saved only after OpenAI accepts it during project loading or a
+pre-setup project validation. Desktop wallet policy controls whether retrieval
+prompts for the user's password or reuses the wallet unlocked at login.
 
 The automatic clean-slate path therefore needs an `mcp.json`, an Admin API key,
 and an explicit organization or workspace ID for tunnel scope. OpenAI's Admin
