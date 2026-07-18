@@ -17,7 +17,7 @@ from .config import (
     remove_profile,
 )
 from .control_plane import attach_tunnel, inspect_tunnel, provision_tunnel
-from .credentials import encrypt_api_key
+from .credentials import decrypt_api_key, encrypt_api_key
 from .admin_credentials import forget_admin_key, load_admin_key, save_admin_key
 from .wizard_preferences import load_preferences, save_last_organization_id
 from .systemd import install_service, wait_for_service
@@ -84,10 +84,50 @@ def run_setup(payload: dict[str, Any]) -> dict[str, Any]:
     admin_key = str(payload.get("admin_api_key") or "").strip()
     if not profile:
         raise ConfigError("profile name is required")
-    if credential_mode == "automatic" and not admin_key:
-        raise ConfigError("automatic credential mode requires an admin API key")
-    if credential_mode == "existing" and not runtime_key:
-        raise ConfigError("existing credential mode requires a runtime API key")
+    if credential_mode not in {"automatic", "existing"}:
+        raise ConfigError("credential mode must be automatic or existing")
+    if credential_mode == "existing" and payload.get("rotate_runtime_key"):
+        raise ConfigError("runtime-key rotation applies only to automatic credentials")
+
+    existing_paths = profile_paths(profile)
+    profile_preexisting = existing_paths.env.exists()
+    existing_environment = read_environment(existing_paths.env) if profile_preexisting else {}
+    if profile_preexisting and not payload.get("replace_profile"):
+        incomplete = (
+            not existing_environment.get("CONTROL_PLANE_TUNNEL_ID")
+            and not existing_environment.get("CONTROL_PLANE_API_KEY")
+            and not existing_paths.credential.exists()
+        )
+        if incomplete:
+            raise ConfigError(
+                f"incomplete profile from an earlier failed setup: {profile}; "
+                "enable 'Replace existing profile' to retry (no tunnel or runtime credential is attached)"
+            )
+
+    reuse_automatic_credential = (
+        credential_mode == "automatic"
+        and profile_preexisting
+        and not payload.get("rotate_runtime_key")
+        and (
+            existing_paths.credential.exists()
+            or bool(existing_environment.get("CONTROL_PLANE_API_KEY"))
+        )
+    )
+    if reuse_automatic_credential:
+        runtime_key = (
+            decrypt_api_key(existing_paths.credential)
+            if existing_paths.credential.exists()
+            else existing_environment["CONTROL_PLANE_API_KEY"]
+        )
+        runtime_credential_action = "reused"
+    elif credential_mode == "automatic":
+        if not admin_key:
+            raise ConfigError("creating an automatic runtime credential requires an admin API key")
+        runtime_credential_action = "created"
+    else:
+        if not runtime_key:
+            raise ConfigError("existing credential mode requires a runtime API key")
+        runtime_credential_action = "supplied"
     content = _mcp_content(payload)
     tunnel_mode = str(payload.get("tunnel_mode") or "existing")
     tunnel_id = str(payload.get("tunnel_id") or "").strip()
@@ -106,24 +146,10 @@ def run_setup(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     project_id = str(payload.get("project_id") or "").strip()
-    if credential_mode == "automatic" and not project_id.startswith("proj_"):
+    if credential_mode == "automatic" and not reuse_automatic_credential and not project_id.startswith("proj_"):
         raise ConfigError("automatic credential mode requires a selected project")
     service_credential = None
     profile_created = False
-    existing_paths = profile_paths(profile)
-    profile_preexisting = existing_paths.env.exists()
-    if profile_preexisting and not payload.get("replace_profile"):
-        existing_environment = read_environment(existing_paths.env)
-        incomplete = (
-            not existing_environment.get("CONTROL_PLANE_TUNNEL_ID")
-            and not existing_environment.get("CONTROL_PLANE_API_KEY")
-            and not existing_paths.credential.exists()
-        )
-        if incomplete:
-            raise ConfigError(
-                f"incomplete profile from an earlier failed setup: {profile}; "
-                "enable 'Replace existing profile' to retry (no tunnel or runtime credential is attached)"
-            )
 
     with tempfile.TemporaryDirectory(prefix="openai-tunnel-kit-wizard-") as temporary:
         temporary_path = Path(temporary)
@@ -145,7 +171,7 @@ def run_setup(payload: dict[str, Any]) -> dict[str, Any]:
         )
         profile_created = not profile_preexisting
         try:
-            if credential_mode == "automatic":
+            if credential_mode == "automatic" and not reuse_automatic_credential:
                 service_credential = create_service_account(
                     admin_key,
                     project_id,
@@ -207,6 +233,7 @@ def run_setup(payload: dict[str, Any]) -> dict[str, Any]:
         "target_mode": payload.get("target_mode"),
         "service_account_id": service_credential.service_account_id if service_credential else None,
         "runtime_api_key_id": service_credential.api_key_id if service_credential else None,
+        "runtime_credential_action": runtime_credential_action,
         "chatgpt_settings_url": "https://chatgpt.com/#settings/Connectors",
         "doctor_command": f"openai-tunnel-kit doctor {profile}",
         "next": (
@@ -383,6 +410,7 @@ pre{white-space:pre-wrap;background:#0d0d0d;border:1px solid #333;border-radius:
 <fieldset><legend>4. Installation</legend>
 <p><label><input type="checkbox" name="pass_desktop_environment"> Pass desktop environment</label></p>
 <p><label><input type="checkbox" name="replace_profile"> Replace existing profile</label></p>
+<p><label><input type="checkbox" name="rotate_runtime_key"> Rotate automatic runtime credential</label><span class="hint">Normally, replacing an existing profile reuses its encrypted runtime key. Enable this only to create a new service account key; revoke the previous service account after verification.</span></p>
 <p><label><input type="checkbox" name="install_service" checked> Install and start systemd user service</label></p>
 <p class="warn"><label><input type="checkbox" name="confirm" required> I confirm this may create or update tunnel metadata and local service configuration. <span class="req" title="Required">*</span></label></p></fieldset>
 <button type="submit">Configure and verify</button></form><h2>Result</h2><pre id="result">Ready.</pre>
@@ -392,5 +420,5 @@ fetch('/api/preferences',{headers:{'x-wizard-token':token}}).then(async r=>{cons
 document.querySelector('#load-projects').addEventListener('click',async()=>{out.textContent='Loading projects…';const r=await fetch('/api/projects',{method:'POST',headers:{'content-type':'application/json','x-wizard-token':token},body:JSON.stringify(adminCredentialData())});const body=await r.json();if(!r.ok){out.textContent=JSON.stringify(body,null,2);return}const select=form.elements.project_id;select.innerHTML='';for(const p of body.projects){const o=document.createElement('option');o.value=p.id;o.textContent=`${p.name} (${p.id})`;select.appendChild(o)}if(body.admin_key_saved){form.elements.admin_api_key.value='';form.elements.save_admin_key.checked=false;form.elements.use_saved_admin_key.checked=true}out.textContent=`Loaded ${body.projects.length} active project(s).${body.admin_key_saved?' Admin key saved in the system wallet.':''}`});
 document.querySelector('#forget-admin-key').addEventListener('click',async()=>{out.textContent='Removing saved admin key…';const r=await fetch('/api/admin-credential/forget',{method:'POST',headers:{'x-wizard-token':token}});const body=await r.json();if(!r.ok){out.textContent=JSON.stringify(body,null,2);return}form.elements.use_saved_admin_key.checked=false;out.textContent=body.removed?'Removed the saved global admin key.':'No saved admin key was present.'});
 form.addEventListener('submit',async e=>{e.preventDefault();out.textContent='Working…';const data={};for(const [k,v] of new FormData(form))if(k!=='mcp_file')data[k]=v;const file=form.elements.mcp_file.files[0];if(file)data.mcp_json=await file.text();
-for(const k of ['confirm','replace_profile','install_service','pass_desktop_environment','use_saved_admin_key','save_admin_key'])data[k]=form.elements[k].checked;
+for(const k of ['confirm','replace_profile','rotate_runtime_key','install_service','pass_desktop_environment','use_saved_admin_key','save_admin_key'])data[k]=form.elements[k].checked;
 try{const r=await fetch('/api/setup',{method:'POST',headers:{'content-type':'application/json','x-wizard-token':token},body:JSON.stringify(data)});const body=await r.json();out.textContent=JSON.stringify(body,null,2)}catch(err){out.textContent=String(err)}});</script></body></html>"""

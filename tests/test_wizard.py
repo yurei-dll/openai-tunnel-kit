@@ -134,6 +134,39 @@ class WizardTests(unittest.TestCase):
         install.assert_called_once_with("demo", start=True)
         wait.assert_called_once_with("demo")
 
+    @patch("openai_tunnel_kit.wizard.create_service_account")
+    @patch("openai_tunnel_kit.wizard.install_service")
+    @patch("openai_tunnel_kit.wizard.wait_for_service")
+    @patch("openai_tunnel_kit.wizard.encrypt_api_key")
+    @patch("openai_tunnel_kit.wizard.inspect_tunnel")
+    @patch("openai_tunnel_kit.wizard.decrypt_api_key", return_value="sk-reused-runtime")
+    def test_replacing_profile_reuses_automatic_runtime_credential(
+        self, decrypt, inspect, encrypt, wait, install, create_account,
+    ):
+        from openai_tunnel_kit.config import initialize_profile
+        paths = initialize_profile("demo", root=self.root, tunnel_id="tunnel_demo")
+        paths.credential.parent.mkdir(parents=True)
+        paths.credential.write_text("encrypted")
+        inspect.return_value = {"id": "tunnel_demo", "organization_ids": ["org_1"]}
+        payload = self.payload()
+        payload.update({
+            "credential_mode": "automatic",
+            "runtime_api_key": "",
+            "admin_api_key": "",
+            "project_id": "",
+            "replace_profile": True,
+        })
+
+        result = run_setup(payload)
+
+        self.assertEqual(result["runtime_credential_action"], "reused")
+        decrypt.assert_called_once_with(self.root / "credentials" / "demo.api-key.cred")
+        create_account.assert_not_called()
+        inspect.assert_called_once_with("demo", "sk-reused-runtime")
+        encrypt.assert_called_once_with(
+            "sk-reused-runtime", self.root / "credentials" / "demo.api-key.cred"
+        )
+
     @patch("openai_tunnel_kit.wizard.install_service")
     @patch("openai_tunnel_kit.wizard.wait_for_service")
     @patch("openai_tunnel_kit.wizard.encrypt_api_key")

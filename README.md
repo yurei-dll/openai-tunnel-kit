@@ -274,6 +274,12 @@ kit profile is visible in OpenAI's project administration UI. The wizard also
 accepts an explicit service-account name when a different lifecycle is
 intentional.
 
+Replacing an existing profile reuses its encrypted runtime credential by
+default instead of creating a duplicate service account. **Rotate automatic
+runtime credential** explicitly creates a replacement key; after the new setup
+passes verification, revoke the previous service account in OpenAI's project
+administration UI. New profiles still create one dedicated service account.
+
 The tunnel name defaults to the profile name. After a successful setup, the
 wizard remembers the first organization ID in the user-global plaintext file
 `~/.config/openai-tunnel-kit/wizard-preferences.json` and pre-fills it on the
