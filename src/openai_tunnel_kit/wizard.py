@@ -378,8 +378,8 @@ def launch_wizard(port: int = 0, open_browser: bool = True) -> None:
     listener.listen(128)
     actual_port = listener.getsockname()[1]
     url = f"http://127.0.0.1:{actual_port}/"
-    print(f"Wizard: {url}")
-    print("Listening on loopback only. Press Ctrl-C to stop.")
+    print(f"Wizard: {url}", flush=True)
+    print("Listening on loopback only. Press Ctrl-C to stop.", flush=True)
     if open_browser:
         threading.Timer(0.25, lambda: webbrowser.open(url)).start()
     config = uvicorn.Config(app, log_level="warning", access_log=False)
