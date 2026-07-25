@@ -69,6 +69,10 @@ class WizardTests(unittest.TestCase):
             ),
         )
 
+    def test_wizard_url_is_flushed_for_portable_launchers(self):
+        source = Path(__file__).resolve().parents[1] / "src/openai_tunnel_kit/wizard.py"
+        self.assertIn('print(f"Wizard: {url}", flush=True)', source.read_text())
+
     def test_setup_requires_confirmation(self):
         payload = self.payload()
         payload["confirm"] = False
