@@ -11,8 +11,10 @@ state.
 - Python 3.9 or newer
 - A separately installed `tunnel-client` executable
 
-The toolkit does not make OpenAI API calls and does not install the tunnel
-client or MCP servers.
+The core profile and service commands do not make OpenAI API calls. The optional
+browser wizard uses the OpenAI Administration API when you ask it to load
+projects or provision credentials and tunnels. The toolkit does not install the
+tunnel client or MCP servers.
 
 ## Install
 
@@ -78,10 +80,12 @@ tar -xzf openai-tunnel-kit-linux-x86_64.tar.gz
 ./openai-tunnel-kit --help
 ```
 
-These archives include Python and this toolkit, but intentionally do not bundle
-the external `tunnel-client`, systemd, or an MCP server's runtime. They are
-built on Ubuntu 22.04 and target compatible glibc-based Linux distributions of
-the matching architecture.
+These archives include Python, this toolkit, and the browser wizard's HTTP and
+system-wallet dependencies. The wizard can therefore be launched directly with
+`./openai-tunnel-kit wizard`; no separate Python installation or `pip` step is
+needed. The archives intentionally do not bundle the external `tunnel-client`,
+systemd, or an MCP server's runtime. They are built on Ubuntu 22.04 and target
+compatible glibc-based Linux distributions of the matching architecture.
 
 ## Quick start
 

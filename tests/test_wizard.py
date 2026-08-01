@@ -69,6 +69,10 @@ class WizardTests(unittest.TestCase):
             ),
         )
 
+    def test_wizard_url_is_flushed_for_portable_launchers(self):
+        source = Path(__file__).resolve().parents[1] / "src/openai_tunnel_kit/wizard.py"
+        self.assertIn('print(f"Wizard: {url}", flush=True)', source.read_text())
+
     def test_setup_requires_confirmation(self):
         payload = self.payload()
         payload["confirm"] = False
@@ -79,9 +83,24 @@ class WizardTests(unittest.TestCase):
         html = _html("test-token")
         self.assertIn('.req{color:#ff5c5c', html)
         self.assertIn('Profile name <span class="req"', html)
+        self.assertIn('<input name="profile" required>', html)
+        self.assertNotIn('value="personal-access-tool"', html)
+        self.assertLess(html.index('name="mcp_file"'), html.index('name="profile"'))
+        self.assertIn("const names=Object.keys(servers);if(names.length===1)", html)
+        self.assertIn("form.elements.profile.value=names[0]", html)
         self.assertIn('At least one organization or workspace ID is required', html)
         self.assertIn('Save entered key globally in system wallet', html)
         self.assertIn('Forget saved key', html)
+        self.assertIn('<legend>1. Admin access and auto-populate</legend>', html)
+        self.assertIn('id="auto-populate">Auto-populate</button>', html)
+        self.assertIn("Promise.all([fetch('/api/projects'", html)
+        self.assertNotIn('id="load-projects"', html)
+        self.assertIn('data-req="mcp-url"', html)
+        self.assertIn("setRequiredMarker('mcp-url',!hasFile&&mode==='url')", html)
+        self.assertIn("setRequiredMarker('runtime-key',credentialMode==='existing')", html)
+        self.assertIn("setRequiredMarker('tunnel-id',tunnelMode==='existing')", html)
+        self.assertIn("setRequiredMarker(name,needsScope&&!hasScope)", html)
+        self.assertNotIn('Tunnel name <span class="req"', html)
 
     @patch("openai_tunnel_kit.wizard.load_admin_key", return_value="sk-saved-admin")
     def test_saved_admin_key_is_global_and_resolved_in_backend(self, load_key):
