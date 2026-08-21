@@ -190,7 +190,8 @@ def _explain(profile: str) -> int:
     print("\nMCP servers")
     for name, server in servers.items():
         target = server.get("url") or shlex.join([server.get("command", ""), *server.get("args", [])])
-        print(f"  {name}: {target}")
+        channel = server.get("channel", "main" if len(servers) == 1 else name)
+        print(f"  {name}: {target} [channel {channel}]")
     print("\nEnvironment")
     print(f"  File: {paths.env}")
     for key in sorted(environment):

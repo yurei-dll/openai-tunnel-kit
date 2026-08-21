@@ -73,6 +73,36 @@ class ConfigTests(unittest.TestCase):
         environment = read_environment(paths.env)
         self.assertIn("--mcp.command", environment["TUNNEL_CLIENT_MCP_ARGS"])
 
+    def test_multiple_mcp_servers_use_explicit_and_default_channels(self):
+        source = self.root / "source.json"
+        source.write_text(json.dumps({"mcpServers": {
+            "roost": {"command": "node", "args": ["/repo/roost.js"], "channel": "coordination"},
+            "experiments": {"url": "http://127.0.0.1:8090/mcp"},
+        }}))
+        paths = initialize_profile("mpai", mcp_source=source, root=self.root)
+        arguments = read_environment(paths.env)["TUNNEL_CLIENT_MCP_ARGS"]
+        self.assertIn("channel=coordination", arguments)
+        self.assertIn("channel=experiments", arguments)
+        self.assertEqual(arguments.count("--mcp."), 2)
+
+    def test_multiple_mcp_servers_reject_duplicate_channels(self):
+        source = self.root / "source.json"
+        source.write_text(json.dumps({"mcpServers": {
+            "one": {"command": "one", "channel": "shared"},
+            "two": {"command": "two", "channel": "shared"},
+        }}))
+        with self.assertRaisesRegex(ConfigError, "assigned to more than one server"):
+            initialize_profile("mpai", mcp_source=source, root=self.root)
+
+    def test_multiple_mcp_servers_reject_conflicting_environment(self):
+        source = self.root / "source.json"
+        source.write_text(json.dumps({"mcpServers": {
+            "one": {"command": "one", "env": {"MODE": "one"}},
+            "two": {"command": "two", "env": {"MODE": "two"}},
+        }}))
+        with self.assertRaisesRegex(ConfigError, "conflicting values"):
+            initialize_profile("mpai", mcp_source=source, root=self.root)
+
     def test_desktop_environment_preference_is_stored(self):
         paths = initialize_profile("desktop", root=self.root, pass_desktop_environment=True)
         environment = read_environment(paths.env)

@@ -172,10 +172,14 @@ openai-tunnel-kit mcp add my-profile ./mcp.json
 openai-tunnel-kit mcp print my-profile
 ```
 
-`mcp add` is operational, not merely archival: it validates one standard
-`mcpServers` entry and configures `tunnel-client run` to launch its `command`
-and `args` on the `main` channel. It also supports a single `url` transport and
-copies the server's `env` strings into the protected profile environment.
+`mcp add` is operational, not merely archival: it validates the standard
+`mcpServers` entries and configures `tunnel-client run` to launch each command
+or URL transport on its own channel. A one-server profile remains on `main` by
+default. In a multi-server profile, a server defaults to a channel matching its
+name; set `channel` explicitly when a stable external name is required. Channel
+names must be unique within the profile. Server `env` strings are copied into
+the protected profile environment; conflicting values for a shared variable
+are rejected rather than choosing one silently.
 
 For example:
 
@@ -186,6 +190,24 @@ For example:
       "command": "node",
       "args": ["/absolute/path/to/repo/dist/index.js"],
       "env": {}
+    }
+  }
+}
+```
+
+A machine-scoped tunnel can carry multiple independently named services:
+
+```json
+{
+  "mcpServers": {
+    "roost": {
+      "channel": "coordination",
+      "command": "node",
+      "args": ["/opt/roostd/dist/mcp.js"]
+    },
+    "experiments": {
+      "channel": "experiments",
+      "url": "http://127.0.0.1:8090/mcp"
     }
   }
 }

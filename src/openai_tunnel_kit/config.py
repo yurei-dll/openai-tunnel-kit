@@ -122,40 +122,63 @@ def mcp_launch(content: Any) -> McpLaunch:
     if not isinstance(content, dict) or not isinstance(content.get("mcpServers"), dict):
         raise ConfigError("MCP config must contain an 'mcpServers' object")
     servers = content["mcpServers"]
-    if len(servers) != 1:
-        raise ConfigError("tunnel profiles require exactly one MCP server bound to channel 'main'")
-    name, server = next(iter(servers.items()))
-    if not isinstance(server, dict):
-        raise ConfigError(f"MCP server {name!r} must be a JSON object")
+    if not servers:
+        raise ConfigError("tunnel profiles require at least one MCP server")
 
-    environment = server.get("env", {})
-    if not isinstance(environment, dict) or any(
-        not isinstance(key, str)
-        or not ENVIRONMENT_KEY_PATTERN.fullmatch(key)
-        or not isinstance(value, str)
-        for key, value in environment.items()
-    ):
-        raise ConfigError(f"MCP server {name!r} has invalid environment variables")
-    if MANAGED_ENVIRONMENT_KEYS.intersection(environment):
-        raise ConfigError(f"MCP server {name!r} cannot override toolkit-managed environment variables")
+    arguments: list[str] = []
+    combined_environment: dict[str, str] = {}
+    channels: set[str] = set()
+    multiple = len(servers) > 1
+    for name, server in servers.items():
+        if not isinstance(name, str) or not name:
+            raise ConfigError("MCP server names must be non-empty strings")
+        if not isinstance(server, dict):
+            raise ConfigError(f"MCP server {name!r} must be a JSON object")
 
-    command = server.get("command")
-    url = server.get("url")
-    if isinstance(command, str) and command:
-        raw_args = server.get("args", [])
-        if not isinstance(raw_args, list) or any(not isinstance(value, str) for value in raw_args):
-            raise ConfigError(f"MCP server {name!r} args must be an array of strings")
-        command_line = shlex.join((command, *raw_args))
-        if "," in command_line:
-            raise ConfigError("MCP command paths and arguments cannot contain commas")
-        arguments = ("--mcp.command", f"command={command_line},channel=main")
-    elif isinstance(url, str) and url:
-        if "," in url:
-            raise ConfigError("MCP server URLs cannot contain commas")
-        arguments = ("--mcp.server-url", f"url={url},channel=main")
-    else:
-        raise ConfigError(f"MCP server {name!r} needs either 'command' or 'url'")
-    return McpLaunch(arguments, dict(environment))
+        channel = server.get("channel", "main" if not multiple else name)
+        if not isinstance(channel, str) or not PROFILE_PATTERN.fullmatch(channel):
+            raise ConfigError(
+                f"MCP server {name!r} channel must start with a letter or digit and contain only "
+                "letters, digits, '.', '_' or '-'"
+            )
+        if channel in channels:
+            raise ConfigError(f"MCP channel {channel!r} is assigned to more than one server")
+        channels.add(channel)
+
+        environment = server.get("env", {})
+        if not isinstance(environment, dict) or any(
+            not isinstance(key, str)
+            or not ENVIRONMENT_KEY_PATTERN.fullmatch(key)
+            or not isinstance(value, str)
+            for key, value in environment.items()
+        ):
+            raise ConfigError(f"MCP server {name!r} has invalid environment variables")
+        if MANAGED_ENVIRONMENT_KEYS.intersection(environment):
+            raise ConfigError(f"MCP server {name!r} cannot override toolkit-managed environment variables")
+        for key, value in environment.items():
+            if key in combined_environment and combined_environment[key] != value:
+                raise ConfigError(
+                    f"MCP servers specify conflicting values for environment variable {key!r}"
+                )
+            combined_environment[key] = value
+
+        command = server.get("command")
+        url = server.get("url")
+        if isinstance(command, str) and command:
+            raw_args = server.get("args", [])
+            if not isinstance(raw_args, list) or any(not isinstance(value, str) for value in raw_args):
+                raise ConfigError(f"MCP server {name!r} args must be an array of strings")
+            command_line = shlex.join((command, *raw_args))
+            if "," in command_line:
+                raise ConfigError("MCP command paths and arguments cannot contain commas")
+            arguments.extend(("--mcp.command", f"command={command_line},channel={channel}"))
+        elif isinstance(url, str) and url:
+            if "," in url:
+                raise ConfigError("MCP server URLs cannot contain commas")
+            arguments.extend(("--mcp.server-url", f"url={url},channel={channel}"))
+        else:
+            raise ConfigError(f"MCP server {name!r} needs either 'command' or 'url'")
+    return McpLaunch(tuple(arguments), combined_environment)
 
 
 def initialize_profile(
